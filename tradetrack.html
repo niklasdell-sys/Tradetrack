@@ -1,0 +1,1608 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>TradeTrack</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/htm@3/dist/htm.umd.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html{height:100%}
+body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;overflow:auto;transition:background .2s,color .2s}
+body.dark{background:#0D1117;color:#E6EDF3;--hover:rgba(255,255,255,.04);--inp-bg:#1C2128;--inp-border:#30363D}
+body.light{background:#F5F7FA;color:#1F2328;--hover:rgba(0,0,0,.04);--inp-bg:#FFFFFF;--inp-border:#D0D7DE}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(128,128,128,.3);border-radius:6px}
+::-webkit-scrollbar-thumb:hover{background:rgba(128,128,128,.5)}
+input,select,textarea{outline:none}
+body.dark input,body.dark select,body.dark textarea{color-scheme:dark}
+body.dark input[type=date]::-webkit-calendar-picker-indicator{filter:invert(.6)}
+.fi{animation:fi .2s cubic-bezier(.16,1,.3,1)}@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.hr{transition:background .12s}
+.hr:hover{background:var(--hover)!important}
+button{cursor:pointer;font-family:inherit}
+.shadow{box-shadow:0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06)}
+.shadow-lg{box-shadow:0 4px 24px rgba(0,0,0,.12),0 1px 4px rgba(0,0,0,.08)}
+body.light .shadow{box-shadow:0 1px 3px rgba(0,0,0,.06),0 4px 16px rgba(0,0,0,.04)}
+body.light .shadow-lg{box-shadow:0 4px 24px rgba(0,0,0,.08),0 1px 4px rgba(0,0,0,.04)}
+@media(max-width:768px){.desk{display:none!important}.mobh{display:flex!important}.g2{grid-template-columns:1fr!important}.g3{grid-template-columns:1fr!important}}
+@media(min-width:769px){.mobh{display:none!important}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const html=htm.bind(React.createElement);
+const {useState,useEffect,useMemo,useRef}=React;
+
+const THEMES={
+  dark:{bg:'#0D1117',card:'#161B22',card2:'#1C2128',border:'#21262D',border2:'#30363D',accent:'#7C6FF7',green:'#3FB950',red:'#F85149',yellow:'#D29922',muted:'#8B949E',text:'#E6EDF3',text2:'#8B949E',sidebar:'#010409',sidebarBorder:'#21262D'},
+  light:{bg:'#F5F7FA',card:'#FFFFFF',card2:'#F0F2F5',border:'#E1E4E8',border2:'#D0D7DE',accent:'#6C5CE7',green:'#1A7F37',red:'#CF222E',yellow:'#9A6700',muted:'#57606A',text:'#1F2328',text2:'#57606A',sidebar:'#FFFFFF',sidebarBorder:'#E1E4E8'},
+};
+// C is a mutable object — applyTheme updates it in-place so all components
+// always read the current theme values on the next React render cycle.
+const C={};
+function applyTheme(t){
+  Object.assign(C,THEMES[t]||THEMES.dark);
+  document.body.className=t;
+  try{localStorage.setItem('tt_theme',t);}catch{}
+}
+applyTheme((()=>{try{return localStorage.getItem('tt_theme')||'dark';}catch{return'dark';}})());
+
+const gid=()=>Math.random().toString(36).slice(2,10);
+
+const TAGS={
+  mentalState:{label:'Mental State',opts:['Focused','Confident','Calm','Neutral','Anxious','FOMO','Greedy','Revenge','Tired','Overconfident']},
+  marketCondition:{label:'Marktlage',opts:['Trending','Momentum','Breakout','Ranging','Choppy','Volatile','News-driven','Slow']},
+  mistake:{label:'Fehler',opts:['FOMO-Einstieg','Stop verschoben','Zu früh raus','Zu spät','Überpositioniert','Kein Plan','Revenge Trade','Regeln gebrochen']},
+};
+
+function pnl(t){if(t.pnlOverride!==undefined&&t.pnlOverride!==null)return t.pnlOverride;if(!t.exit)return null;return(t.exit-t.entry)*t.qty*(t.side==='Long'?1:-1)-(t.fees||0);}
+function pct(t){const p=pnl(t);return p===null?null:(p/(t.entry*t.qty))*100;}
+function fd(n){if(n===null||n===undefined)return'–';const a=Math.abs(n),s=n<0?'-':'';return s+'$'+a.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function fp(n){if(n===null||n===undefined)return'–';return(n>=0?'+':'')+n.toFixed(2)+'%';}
+function pc(n){return n===null?C.muted:n>=0?C.green:C.red;}
+function calcRMul(t){if(!t.stopLoss||!t.entry||!t.exit)return null;const risk=Math.abs(t.entry-t.stopLoss)*t.qty;if(risk<=0)return null;return(pnl(t)||0)/risk;}
+function calcMaxDD(trades){const s=[...trades].filter(t=>t.exit).sort((a,b)=>a.date.localeCompare(b.date));let peak=0,eq=0,maxAbs=0,maxPct=0;s.forEach(t=>{eq+=pnl(t)||0;if(eq>peak)peak=eq;const dd=peak-eq;if(dd>maxAbs){maxAbs=dd;maxPct=peak>0?dd/peak*100:0;}});return{abs:maxAbs,pct:maxPct};}
+function calcExpectancy(trades){const ps=trades.filter(t=>t.exit).map(pnl).filter(p=>p!==null);return ps.length?ps.reduce((a,b)=>a+b,0)/ps.length:0;}
+function calcDayWinPct(trades){const m={};trades.filter(t=>t.exit).forEach(t=>{m[t.date]=(m[t.date]||0)+(pnl(t)||0);});const d=Object.values(m);return d.length?d.filter(p=>p>0).length/d.length*100:0;}
+function calcStreak(trades){
+  const s=[...trades].filter(t=>t.exit).sort((a,b)=>a.date.localeCompare(b.date));
+  let ts=0,tdir=0;
+  for(let i=s.length-1;i>=0;i--){const p=pnl(s[i])||0,d=p>0?1:p<0?-1:0;if(i===s.length-1){ts=d;tdir=d;}else if(d===0||d!==tdir)break;else ts+=tdir;}
+  const m={};s.forEach(t=>{m[t.date]=(m[t.date]||0)+(pnl(t)||0);});
+  const days=Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0]));
+  let ds=0,ddir=0;
+  for(let i=days.length-1;i>=0;i--){const p=days[i][1],d=p>0?1:p<0?-1:0;if(i===days.length-1){ds=d;ddir=d;}else if(d===0||d!==ddir)break;else ds+=ddir;}
+  return{trade:ts,day:ds};
+}
+function calcZellaScore(trades){
+  const cl=trades.filter(t=>t.exit);const ps=cl.map(pnl).filter(p=>p!==null);if(ps.length<3)return null;
+  const ws=ps.filter(p=>p>0),ls=ps.filter(p=>p<0);
+  const gw=ws.reduce((a,b)=>a+b,0),gl=Math.abs(ls.reduce((a,b)=>a+b,0));
+  const pf=gl>0?gw/gl:gw>0?10:0;
+  const pfS=pf>=2.6?100:pf>=2.4?90:pf>=2.2?80:pf>=2?70:pf>=1.9?60:pf>=1.8?50:Math.max(0,pf/1.8*20);
+  const avgW=ws.length?gw/ws.length:0,avgL=ls.length?gl/ls.length:1;
+  const wlrS=avgW/avgL>=2.6?100:avgW/avgL>=2.4?90:avgW/avgL>=2.2?80:avgW/avgL>=2?70:avgW/avgL>=1.9?60:avgW/avgL>=1.8?50:Math.max(0,avgW/avgL/1.8*20);
+  const {pct:dd,abs:ddA}=calcMaxDD(trades);const ddS=Math.max(0,100-dd);
+  const wr=ws.length/ps.length*100;const wrS=Math.min(100,wr/60*100);
+  const tot=ps.reduce((a,b)=>a+b,0);const rf=ddA>0?tot/ddA:0;
+  const rfS=rf>=3.5?100:rf>=3?80:rf>=2.5?65:rf>=2?55:rf>=1.5?40:rf>=1?15:0;
+  const mean=tot/ps.length;const std=Math.sqrt(ps.reduce((a,b)=>a+(b-mean)**2,0)/ps.length);
+  const consS=tot>0?Math.max(0,100-std/Math.abs(tot)*100):0;
+  return Math.min(100,Math.max(0,Math.round(pfS*.25+wlrS*.20+ddS*.20+wrS*.15+rfS*.10+consS*.10)));
+}
+function calcTilt(trades){
+  const s=[...trades].filter(t=>t.exit).sort((a,b)=>a.date.localeCompare(b.date));
+  if(s.length<2)return 0;let tilt=0;
+  for(let i=1;i<s.length;i++){if((pnl(s[i-1])||0)<0&&s[i].qty>s[i-1].qty*1.4)tilt++;}
+  return Math.min(100,tilt/Math.max(s.length*0.08,0.5)*100);
+}
+
+const SD=[
+  {id:'s1',date:'2026-02-03',time:'09:45',symbol:'AAPL',type:'Stock',side:'Long',entry:172.5,exit:178.3,qty:100,fees:2,stopLoss:170,profitTarget:180,notes:'Sauberer Breakout',setup:'Breakout',status:'closed',rating:4,reviewed:true,tags:{mentalState:'Focused',marketCondition:'Trending',mistake:''}},
+  {id:'s2',date:'2026-02-06',time:'10:15',symbol:'TSLA',type:'Stock',side:'Short',entry:185,exit:179.5,qty:50,fees:2,stopLoss:188,profitTarget:176,notes:'',setup:'Mean Reversion',status:'closed',rating:3,reviewed:true,tags:{mentalState:'Confident',marketCondition:'Ranging',mistake:''}},
+  {id:'s3',date:'2026-02-10',time:'14:00',symbol:'BTC',type:'Crypto',side:'Long',entry:68000,exit:71500,qty:0.5,fees:10,stopLoss:66000,profitTarget:74000,notes:'Support Bounce',setup:'Support Bounce',status:'closed',rating:5,reviewed:true,tags:{mentalState:'Calm',marketCondition:'Momentum',mistake:''}},
+  {id:'s4',date:'2026-02-13',time:'11:30',symbol:'SPY',type:'Option',side:'Long',entry:3.2,exit:2.1,qty:10,fees:2,stopLoss:2.5,profitTarget:5,notes:'Call verloren',setup:'Momentum',status:'closed',rating:2,reviewed:true,tags:{mentalState:'FOMO',marketCondition:'Choppy',mistake:'FOMO-Einstieg'}},
+  {id:'s5',date:'2026-02-18',time:'09:30',symbol:'NQ',type:'Future',side:'Long',entry:18450,exit:18620,qty:1,fees:10,stopLoss:18350,profitTarget:18700,notes:'Trend Follow Eröffnung',setup:'Trend Follow',status:'closed',rating:4,reviewed:true,tags:{mentalState:'Focused',marketCondition:'Trending',mistake:''}},
+  {id:'s6',date:'2026-02-21',time:'13:00',symbol:'NVDA',type:'Stock',side:'Long',entry:875,exit:895,qty:20,fees:2,stopLoss:860,profitTarget:910,notes:'Earnings Momentum',setup:'Catalyst',status:'closed',rating:5,reviewed:true,tags:{mentalState:'Confident',marketCondition:'Momentum',mistake:''}},
+  {id:'s7',date:'2026-02-25',time:'15:30',symbol:'ETH',type:'Crypto',side:'Long',entry:3500,exit:3350,qty:2,fees:8,stopLoss:3400,profitTarget:3700,notes:'Stop zu eng',setup:'Support Bounce',status:'closed',rating:1,reviewed:true,tags:{mentalState:'Anxious',marketCondition:'Volatile',mistake:'Stop verschoben'}},
+  {id:'s8',date:'2026-03-03',time:'10:00',symbol:'AAPL',type:'Stock',side:'Long',entry:176,exit:180.5,qty:100,fees:2,stopLoss:174,profitTarget:183,notes:'',setup:'Breakout',status:'closed',rating:4,reviewed:false,tags:{mentalState:'Calm',marketCondition:'Trending',mistake:''}},
+  {id:'s9',date:'2026-03-07',time:'11:00',symbol:'AMD',type:'Stock',side:'Short',entry:165,exit:158,qty:75,fees:2,stopLoss:168,profitTarget:155,notes:'Post Earnings Schwäche',setup:'Mean Reversion',status:'closed',rating:4,reviewed:true,tags:{mentalState:'Focused',marketCondition:'News-driven',mistake:''}},
+  {id:'s10',date:'2026-03-12',time:'09:45',symbol:'MSFT',type:'Stock',side:'Long',entry:415,exit:422,qty:30,fees:2,stopLoss:410,profitTarget:430,notes:'',setup:'Breakout',status:'closed',rating:3,reviewed:false,tags:{mentalState:'Neutral',marketCondition:'Trending',mistake:''}},
+  {id:'s11',date:'2026-03-18',time:'14:30',symbol:'NQ',type:'Future',side:'Short',entry:19100,exit:18950,qty:1,fees:10,stopLoss:19200,profitTarget:18800,notes:'HOD Reversal',setup:'Mean Reversion',status:'closed',rating:4,reviewed:true,tags:{mentalState:'Focused',marketCondition:'Volatile',mistake:''}},
+  {id:'s12',date:'2026-03-24',time:'10:30',symbol:'GOOGL',type:'Stock',side:'Long',entry:172,exit:176.5,qty:60,fees:2,stopLoss:169,profitTarget:180,notes:'',setup:'Breakout',status:'closed',rating:3,reviewed:true,tags:{mentalState:'Neutral',marketCondition:'Trending',mistake:''}},
+  {id:'s13',date:'2026-04-02',time:'12:00',symbol:'BTC',type:'Crypto',side:'Long',entry:82000,exit:85500,qty:0.3,fees:12,stopLoss:79000,profitTarget:90000,notes:'Halving Momentum',setup:'Trend Follow',status:'closed',rating:5,reviewed:true,tags:{mentalState:'Confident',marketCondition:'Momentum',mistake:''}},
+  {id:'s14',date:'2026-04-05',time:'09:30',symbol:'AAPL',type:'Stock',side:'Long',entry:182,exit:null,qty:50,fees:1,stopLoss:178,profitTarget:192,notes:'Noch offen',setup:'Breakout',status:'open',rating:0,reviewed:false,tags:{mentalState:'Calm',marketCondition:'Trending',mistake:''}},
+];
+const SPB=[
+  {id:'p1',name:'Breakout',timeframe:'Daily/1h',description:'Ausbruch aus Konsolidierung mit Volumen.',rules:'Konsolidierung mind. 5 Kerzen\nBreakout mit Volumen\nEinstieg beim Retest\nStop unter Breakout-Level\nZiel: 2x Risiko'},
+  {id:'p2',name:'Mean Reversion',timeframe:'15min',description:'Trades zurück zum gleitenden Durchschnitt.',rules:'RSI unter 30 oder über 70\n2 ATR vom 20er MA\nUmkehr-Kerze abwarten\nStop hinter Extrempunkt\nZiel: 20er MA'},
+  {id:'p3',name:'Trend Follow',timeframe:'4h/Daily',description:'Pullback-Einstiege in laufenden Trends.',rules:'Trend bestätigt (HH, HL)\nPullback auf Fibonacci\nMomentum-Rückkehr\nTrailing Stop 2x ATR'},
+  {id:'p4',name:'Support Bounce',timeframe:'1h',description:'Long-Trades an Support-Zonen.',rules:'Support 2x getestet\nVolumen nimmt ab\nUmkehrsignal im M15\nStop unter Support'},
+];
+
+// SVG Charts
+function AreaChart({data,xKey,yKey,color,h=150}){
+  if(!data||!data.length)return html`<div style=${{height:h,display:'flex',alignItems:'center',justifyContent:'center',color:C.muted,fontSize:12}}>Keine Daten</div>`;
+  const W=600,PL=44,PR=8,PT=8,PB=28,iW=W-PL-PR,iH=h-PT-PB;
+  const vals=data.map(d=>d[yKey]);const mn=Math.min(...vals),mx=Math.max(...vals);const rng=mx-mn||1;
+  const px=i=>PL+i/(data.length-1||1)*iW,py=v=>PT+iH-(v-mn)/rng*iH;
+  const pts=data.map((d,i)=>`${px(i)},${py(d[yKey])}`).join(' ');
+  const area=`M${PL},${PT+iH} ${data.map((d,i)=>`L${px(i)},${py(d[yKey])}`).join(' ')} L${PL+iW},${PT+iH} Z`;
+  const gId='g'+color.replace('#','').slice(0,6);
+  const step=Math.max(1,Math.floor(data.length/5));
+  return html`<svg viewBox="0 0 ${W} ${h}" style=${{width:'100%',height:h}}>
+    <defs><linearGradient id=${gId} x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color=${color} stop-opacity="0.3"/>
+      <stop offset="100%" stop-color=${color} stop-opacity="0"/>
+    </linearGradient></defs>
+    ${[0,0.25,0.5,0.75,1].map((f,i)=>{const v=mn+rng*f;return html`<line key=${i} x1=${PL} y1=${py(v)} x2=${W-PR} y2=${py(v)} stroke=${C.border} stroke-dasharray="4,3"/>
+      <text key=${'t'+i} x=${PL-4} y=${py(v)+4} text-anchor="end" font-size="9" fill=${C.muted}>${v>=1000?'$'+(v/1000).toFixed(1)+'k':v<=-1000?'-$'+(Math.abs(v)/1000).toFixed(1)+'k':v<0?'-$'+Math.abs(v).toFixed(0):'$'+v.toFixed(0)}</text>`;
+    })}
+    ${data.filter((_,i)=>i%step===0).map(d=>html`<text key=${d[xKey]} x=${px(data.indexOf(d))} y=${h-4} text-anchor="middle" font-size="9" fill=${C.muted}>${d[xKey]}</text>`)}
+    <path d=${area} fill=${'url(#'+gId+')'}/>
+    <polyline points=${pts} fill="none" stroke=${color} stroke-width="2.5" stroke-linejoin="round"/>
+  </svg>`;
+}
+function BarChart({data,xKey,yKey,h=150}){
+  if(!data||!data.length)return null;
+  const W=600,PL=44,PR=8,PT=8,PB=28,iW=W-PL-PR,iH=h-PT-PB;
+  const mx=Math.max(...data.map(d=>Math.abs(d[yKey])),1);
+  const bW=iW/data.length*0.6,mid=PT+iH/2;
+  return html`<svg viewBox="0 0 ${W} ${h}" style=${{width:'100%',height:h}}>
+    ${[-mx,-mx/2,0,mx/2,mx].map((v,i)=>{const y=mid-v/mx*(iH/2);return html`
+      <line key=${i} x1=${PL} y1=${y} x2=${W-PR} y2=${y} stroke=${C.border} stroke-dasharray="4,3"/>
+      <text key=${'t'+i} x=${PL-4} y=${y+4} text-anchor="end" font-size="9" fill=${C.muted}>${v===0?'0':v>=1000?'$'+(v/1000).toFixed(0)+'k':v<0?'-$'+Math.abs(v).toFixed(0):'$'+v.toFixed(0)}</text>`;
+    })}
+    <line x1=${PL} y1=${mid} x2=${W-PR} y2=${mid} stroke=${C.border2}/>
+    ${data.map((d,i)=>{const v=d[yKey],x=PL+i*(iW/data.length)+(iW/data.length-bW)/2,bh=Math.abs(v)/mx*(iH/2),y=v>=0?mid-bh:mid;return html`
+      <rect key=${i} x=${x} y=${y} width=${bW} height=${bh} fill=${v>=0?C.green:C.red} rx="3"/>
+      <text key=${'l'+i} x=${x+bW/2} y=${h-4} text-anchor="middle" font-size="9" fill=${C.muted}>${d[xKey]}</text>`;
+    })}
+  </svg>`;
+}
+function HBarChart({data,xKey,yKey}){
+  if(!data||!data.length)return null;
+  const RH=34,W=500,PL=58,PR=80,PT=5,H=data.length*RH+PT+10;
+  const mx=Math.max(...data.map(d=>Math.abs(d[yKey])),1);
+  const iW=W-PL-PR,midX=PL+iW/2,bH=18;
+  return html`<svg viewBox="0 0 ${W} ${H}" style=${{width:'100%',height:H}}>
+    <line x1=${midX} y1=${PT} x2=${midX} y2=${H-10} stroke=${C.border2}/>
+    ${data.map((d,i)=>{const v=d[yKey],y=PT+i*RH+(RH-bH)/2,w=Math.abs(v)/mx*(iW/2),x=v>=0?midX:midX-w,col=v>=0?C.green:C.red;return html`
+      <text key=${'l'+i} x=${PL-4} y=${y+bH/2+4} text-anchor="end" font-size="11" fill=${C.text} font-family="monospace" font-weight="700">${d[xKey]}</text>
+      <rect key=${i} x=${x} y=${y} width=${w||1} height=${bH} fill=${col} rx="3"/>
+      <text key=${'v'+i} x=${v>=0?midX+w+4:midX-w-4} y=${y+bH/2+4} font-size="10" fill=${col} text-anchor=${v>=0?'start':'end'} font-weight="600">${(v>=0?'+$':'-$')+Math.abs(v).toFixed(0)}</text>`;
+    })}
+  </svg>`;
+}
+
+// UI Components
+function Card({children,style={},className=''}){
+  return html`<div class=${'shadow '+className} style=${{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,...style}}>${children}</div>`;
+}
+function Badge({children,color=C.accent}){
+  return html`<span style=${{background:color+'1A',color,fontSize:11,fontWeight:600,padding:'2px 9px',borderRadius:20,whiteSpace:'nowrap',border:`1px solid ${color}33`}}>${children}</span>`;
+}
+function Btn({children,onClick,variant='primary',disabled=false,style={}}){
+  const v={
+    primary:{background:C.accent,color:'#fff',border:'none'},
+    ghost:{background:'transparent',color:C.text2,border:`1px solid ${C.border}`},
+    success:{background:C.green,color:'#fff',border:'none'},
+    danger:{background:C.red+'18',color:C.red,border:`1px solid ${C.red}44`},
+  };
+  return html`<button onClick=${disabled?undefined:onClick} disabled=${disabled}
+    style=${{padding:'8px 16px',borderRadius:9,fontWeight:600,fontSize:13,display:'inline-flex',alignItems:'center',gap:6,opacity:disabled?.4:1,cursor:disabled?'not-allowed':'pointer',transition:'opacity .15s,filter .15s',...v[variant],...style}}>
+    ${children}
+  </button>`;
+}
+function SC({label,value,sub,color,small}){
+  return html`<${Card} style=${{padding:'16px 18px'}}>
+    <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.08em',textTransform:'uppercase',marginBottom:6}}>${label}</div>
+    <div style=${{fontSize:small?15:22,fontWeight:800,color:color||C.text,lineHeight:1.1,letterSpacing:'-.01em'}}>${value}</div>
+    ${sub?html`<div style=${{fontSize:11,color:C.muted,marginTop:4}}>${sub}</div>`:''}
+  </${Card}>`;
+}
+
+// Zella Score Gauge
+function ZellaGauge({score}){
+  if(score===null)return html`<${Card} style=${{padding:20,textAlign:'center'}}>
+    <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:8}}>ZELLA SCORE</div>
+    <div style=${{fontSize:28,fontWeight:800,color:C.muted}}>–</div>
+    <div style=${{fontSize:11,color:C.muted,marginTop:4}}>Min. 3 Trades nötig</div>
+  </${Card}>`;
+  const color=score>=70?C.green:score>=45?C.yellow:C.red;
+  const label=score>=70?'Exzellent':score>=55?'Gut':score>=40?'Mittelmäßig':'Schwach';
+  const r=38,cx=55,cy=55,circ=2*Math.PI*r,dash=score/100*circ;
+  return html`<${Card} style=${{padding:'16px',textAlign:'center'}}>
+    <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:4}}>ZELLA SCORE</div>
+    <svg viewBox="0 0 110 110" style=${{width:110,height:110,margin:'0 auto',display:'block'}}>
+      <circle cx=${cx} cy=${cy} r=${r} fill="none" stroke=${C.border2} stroke-width="8"/>
+      <circle cx=${cx} cy=${cy} r=${r} fill="none" stroke=${color} stroke-width="8"
+        stroke-dasharray="${dash} ${circ-dash}" stroke-linecap="round" transform="rotate(-90 55 55)"/>
+      <text x=${cx} y="52" text-anchor="middle" font-size="24" font-weight="800" fill=${color}>${score}</text>
+      <text x=${cx} y="68" text-anchor="middle" font-size="10" fill=${color}>${label}</text>
+    </svg>
+  </${Card}>`;
+}
+
+// Tilt Meter
+function TiltWidget({score}){
+  const color=score>=60?C.red:score>=30?C.yellow:C.green;
+  const label=score>=60?'⚠ Tilt erkannt':score>=30?'Vorsicht — Muster sichtbar':'Kein Tilt';
+  return html`<${Card} style=${{padding:'16px 18px'}}>
+    <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:10}}>TILT METER</div>
+    <div style=${{background:C.border2,borderRadius:20,height:10,overflow:'hidden',marginBottom:8}}>
+      <div style=${{width:Math.max(score,2)+'%',height:'100%',borderRadius:20,background:`linear-gradient(90deg,${C.green} 0%,${C.yellow} 50%,${C.red} 100%)`,transition:'width .5s'}}/>
+    </div>
+    <div style=${{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:6}}>
+      <span style=${{color:C.muted}}>Kein Tilt</span>
+      <span style=${{color,fontWeight:700}}>${label}</span>
+      <span style=${{color:C.muted}}>Stark</span>
+    </div>
+    <div style=${{fontSize:11,color:C.muted}}>Erkennt Grössenerhöhung nach Verlusttrades</div>
+  </${Card}>`;
+}
+
+// Calendar Widget
+function CalendarWidget({trades}){
+  const now=new Date();
+  const [y,setY]=useState(now.getFullYear());
+  const [m,setM]=useState(now.getMonth());
+  const dim=new Date(y,m+1,0).getDate();
+  const firstDay=(new Date(y,m,1).getDay()+6)%7; // Mon=0
+  const dayMap={};
+  trades.filter(t=>t.exit).forEach(t=>{
+    const d=new Date(t.date);
+    if(d.getMonth()===m&&d.getFullYear()===y){const day=d.getDate();dayMap[day]=(dayMap[day]||0)+(pnl(t)||0);}
+  });
+  const MNAMES=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+  const DNAMES=['Mo','Di','Mi','Do','Fr','Sa','So'];
+  const prevM=()=>{if(m===0){setM(11);setY(y-1);}else setM(m-1);};
+  const nextM=()=>{if(m===11){setM(0);setY(y+1);}else setM(m+1);};
+  const cells=[...Array(firstDay).fill(null),...Array.from({length:dim},(_,i)=>i+1)];
+  const today=new Date();
+  return html`<div>
+    <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+      <button onClick=${prevM} style=${{background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:18,lineHeight:1}}>‹</button>
+      <span style=${{fontWeight:700,fontSize:13}}>${MNAMES[m]} ${y}</span>
+      <button onClick=${nextM} style=${{background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:18,lineHeight:1}}>›</button>
+    </div>
+    <div style=${{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2}}>
+      ${DNAMES.map(d=>html`<div key=${d} style=${{textAlign:'center',fontSize:9,color:C.muted,paddingBottom:3}}>${d}</div>`)}
+      ${cells.map((day,i)=>{
+        if(!day)return html`<div key=${'e'+i}/>`;
+        const val=dayMap[day];const has=val!==undefined;
+        const isToday=today.getDate()===day&&today.getMonth()===m&&today.getFullYear()===y;
+        return html`<div key=${i} title=${has?fd(val):''} style=${{textAlign:'center',fontSize:11,padding:'3px 1px',borderRadius:5,fontWeight:has?700:400,
+          background:has?(val>0?C.green+'CC':val<0?C.red+'CC':C.muted+'44'):'transparent',
+          color:has?'#fff':C.muted,border:isToday?`1px solid ${C.accent}`:'1px solid transparent',cursor:has?'default':'default'}}>${day}</div>`;
+      })}
+    </div>
+  </div>`;
+}
+
+// Star Rating
+function Stars({value=0,onChange}){
+  return html`<div style=${{display:'flex',gap:2}}>
+    ${[1,2,3,4,5].map(i=>html`<button key=${i} onClick=${()=>onChange&&onChange(i===value?0:i)}
+      style=${{background:'none',border:'none',fontSize:18,color:i<=value?C.yellow:C.border2,cursor:onChange?'pointer':'default',lineHeight:1}}>★</button>`)}
+  </div>`;
+}
+
+// Icons
+const ICO={dashboard:'M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm11 0h7v7h-7z',journal:'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM8 13h8M8 17h8',chart:'M18 20V10M12 20V4M6 20v-6',book:'M4 19.5A2.5 2.5 0 016.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z',upload:'M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12',plus:'M12 5v14M5 12h14',x:'M18 6L6 18M6 6l12 12',edit:'M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4z',trash:'M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2',menu:'M3 12h18M3 6h18M3 18h18',notebook:'M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zM22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z'};
+function Ico({n,size=18,color='currentColor'}){const d=ICO[n];if(!d)return null;
+  return html`<svg width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke=${color} stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    ${d.split(/(?=M)/).map((s,i)=>html`<path key=${i} d=${s.trim()}/>`)}
+  </svg>`;}
+
+// Trade Modal
+function TradeModal({onSave,onClose,onDelete,initial,playbook}){
+  const blank={date:new Date().toISOString().slice(0,10),time:'',symbol:'',type:'Stock',side:'Long',entry:'',exit:'',qty:'',fees:'',stopLoss:'',profitTarget:'',notes:'',setup:'',session:'',status:'closed',rating:0,reviewed:false,tags:{mentalState:'',marketCondition:'',mistake:''}};
+  const [f,setF]=useState(initial?{...blank,...initial,entry:initial.entry||'',exit:initial.exit||'',qty:initial.qty||'',fees:initial.fees||'',stopLoss:initial.stopLoss||'',profitTarget:initial.profitTarget||'',session:initial.session||''}:blank);
+  const s=(k,v)=>setF(x=>({...x,[k]:v}));
+  const st=(k,v)=>setF(x=>({...x,tags:{...x.tags,[k]:v}}));
+  const preview=f.exit&&+f.exit&&f.entry&&f.qty?pnl({...f,entry:+f.entry,exit:+f.exit,qty:+f.qty,fees:+f.fees||0,status:'closed'}):null;
+  const rMul=f.stopLoss&&f.entry&&f.exit&&f.qty?calcRMul({...f,entry:+f.entry,exit:+f.exit,qty:+f.qty,fees:+f.fees||0,stopLoss:+f.stopLoss,status:'closed'}):null;
+  const ok=f.symbol&&+f.entry>0&&+f.qty>0;
+  const inp={background:'var(--inp-bg)',border:`1px solid var(--inp-border)`,borderRadius:9,padding:'8px 12px',fontSize:13,color:C.text,width:'100%'};
+  const lbl={fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:4,display:'block'};
+  return html`<div style=${{position:'fixed',inset:0,zIndex:100,display:'flex',alignItems:'center',justifyContent:'center',padding:12,background:'rgba(0,0,0,.78)'}}>
+    <div class="fi" style=${{background:C.card,border:`1px solid ${C.border2}`,borderRadius:18,width:'100%',maxWidth:540,maxHeight:'95vh',overflowY:'auto'}}>
+      <div style=${{padding:'16px 20px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <span style=${{fontWeight:700,fontSize:15}}>${initial?'Trade bearbeiten':'Neuer Trade'}</span>
+        <button onClick=${onClose} style=${{background:'none',border:'none',color:C.muted,lineHeight:0}}><${Ico} n="x" size=${20}/></button>
+      </div>
+      <div style=${{padding:'16px 20px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+
+        <div style=${{gridColumn:'1/-1',display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <div><label style=${lbl}>Datum</label><input type="date" value=${f.date} onChange=${e=>s('date',e.target.value)} style=${inp}/></div>
+          <div><label style=${lbl}>Uhrzeit</label><input type="time" value=${f.time||''} onChange=${e=>s('time',e.target.value)} style=${inp}/></div>
+        </div>
+        <div><label style=${lbl}>Symbol</label><input value=${f.symbol} onChange=${e=>s('symbol',e.target.value.toUpperCase())} placeholder="AAPL" style=${{...inp,fontFamily:'monospace',fontWeight:700}}/></div>
+        <div><label style=${lbl}>Asset-Typ</label><select value=${f.type} onChange=${e=>s('type',e.target.value)} style=${inp}>${['Stock','Option','Future','Crypto'].map(t=>html`<option key=${t}>${t}</option>`)}</select></div>
+        <div><label style=${lbl}>Session</label><select value=${f.session||''} onChange=${e=>s('session',e.target.value)} style=${inp}>
+          <option value="">– Keine –</option>
+          ${['Pre-Market','NY Open (9:30–10:30)','NY AM (10:30–12:00)','Lunch (12:00–14:00)','NY PM (14:00–16:00)','After Hours','London Open','Asian Session'].map(o=>html`<option key=${o} value=${o}>${o}</option>`)}
+        </select></div>
+
+        <div style=${{gridColumn:'1/-1',display:'flex',gap:8}}>
+          ${['Long','Short'].map(d=>html`<button key=${d} onClick=${()=>s('side',d)} style=${{flex:1,padding:8,borderRadius:10,fontWeight:700,fontSize:13,border:f.side===d?'none':`1px solid ${C.border2}`,background:f.side===d?(d==='Long'?C.green:C.red):C.card2,color:f.side===d?(d==='Long'?'#000':'#fff'):C.muted}}>${d==='Long'?'▲ Long':'▼ Short'}</button>`)}
+        </div>
+
+        <div><label style=${lbl}>Einstieg $</label><input type="number" step="0.01" placeholder="0.00" value=${f.entry} onChange=${e=>s('entry',e.target.value)} style=${inp}/></div>
+        <div><label style=${lbl}>Ausstieg $</label><input type="number" step="0.01" placeholder="leer = offen" value=${f.exit} onChange=${e=>s('exit',e.target.value)} style=${inp}/></div>
+        <div><label style=${lbl}>Anzahl / Kontrakte</label><input type="number" step="0.001" placeholder="1" value=${f.qty} onChange=${e=>s('qty',e.target.value)} style=${inp}/></div>
+        <div><label style=${lbl}>Gebühren $</label><input type="number" step="0.01" placeholder="0.00" value=${f.fees} onChange=${e=>s('fees',e.target.value)} style=${inp}/></div>
+        <div><label style=${lbl}>Stop Loss $</label><input type="number" step="0.01" placeholder="0.00" value=${f.stopLoss} onChange=${e=>s('stopLoss',e.target.value)} style=${inp}/></div>
+        <div><label style=${lbl}>Profit Target $</label><input type="number" step="0.01" placeholder="0.00" value=${f.profitTarget} onChange=${e=>s('profitTarget',e.target.value)} style=${inp}/></div>
+
+        <div style=${{gridColumn:'1/-1'}}><label style=${lbl}>Setup / Strategie</label>
+          <select value=${f.setup||''} onChange=${e=>s('setup',e.target.value)} style=${inp}>
+            <option value="">– Kein Setup –</option>
+            ${(playbook||[]).map(p=>html`<option key=${p.id} value=${p.name}>${p.name}</option>`)}
+          </select></div>
+
+        <div style=${{gridColumn:'1/-1',display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+          ${Object.entries(TAGS).map(([k,{label,opts}])=>html`<div key=${k}><label style=${lbl}>${label}</label>
+            <select value=${f.tags[k]||''} onChange=${e=>st(k,e.target.value)} style=${inp}><option value="">–</option>${opts.map(o=>html`<option key=${o}>${o}</option>`)}</select></div>`)}
+        </div>
+
+        <div style=${{gridColumn:'1/-1',display:'flex',gap:8}}>
+          ${['closed','open'].map(st2=>html`<button key=${st2} onClick=${()=>s('status',st2)} style=${{flex:1,padding:7,borderRadius:10,fontWeight:600,fontSize:13,border:f.status===st2?'none':`1px solid ${C.border2}`,background:f.status===st2?C.accent:C.card2,color:f.status===st2?'#fff':C.muted}}>${st2==='closed'?'✓ Geschlossen':'◷ Offen'}</button>`)}
+        </div>
+
+        <div style=${{gridColumn:'1/-1'}}><label style=${lbl}>Notizen</label><textarea rows="3" value=${f.notes} onChange=${e=>s('notes',e.target.value)} placeholder="Trade-Notizen..." style=${{...inp,resize:'vertical'}}/></div>
+
+        <div style=${{gridColumn:'1/-1',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10}}>
+          <div><label style=${{...lbl,display:'block',marginBottom:6}}>Bewertung</label><${Stars} value=${f.rating} onChange=${v=>s('rating',v)}/></div>
+          <label style=${{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:13}}>
+            <input type="checkbox" checked=${f.reviewed} onChange=${e=>s('reviewed',e.target.checked)} style=${{accentColor:C.accent,width:16,height:16}}/>
+            <span style=${{color:C.text2}}>Als reviewed markieren</span>
+          </label>
+        </div>
+
+        ${(preview!==null||rMul!==null)&&html`<div style=${{gridColumn:'1/-1',padding:'10px 14px',borderRadius:10,background:preview>=0?C.green+'18':C.red+'18',border:`1px solid ${(preview||0)>=0?C.green:C.red}33`,display:'flex',justifyContent:'space-between',alignItems:'center',gap:12}}>
+          <div><div style=${{fontSize:10,color:C.muted,marginBottom:2}}>P&L</div><div style=${{fontSize:18,fontWeight:800,color:(preview||0)>=0?C.green:C.red}}>${preview!==null?(preview>=0?'+':'')+fd(preview):'–'}</div></div>
+          ${rMul!==null&&html`<div style=${{textAlign:'right'}}><div style=${{fontSize:10,color:C.muted,marginBottom:2}}>R-Multiple</div><div style=${{fontSize:18,fontWeight:800,color:rMul>=0?C.green:C.red}}>${rMul>=0?'+':''}${rMul.toFixed(2)}R</div></div>`}
+        </div>`}
+      </div>
+      <div style=${{padding:'12px 20px',borderTop:`1px solid ${C.border}`,display:'flex',gap:10}}>
+        <${Btn} variant="ghost" onClick=${onClose} style=${{flex:1,justifyContent:'center'}}>Abbrechen</${Btn}>
+        ${initial&&onDelete?html`<button onClick=${()=>{if(confirm('Trade löschen?'))onDelete(initial.id);}} style=${{background:C.red+'22',border:`1px solid ${C.red}`,borderRadius:9,padding:'9px 16px',color:C.red,cursor:'pointer',fontWeight:600,fontSize:13}}>Löschen</button>`:''}
+        <${Btn} onClick=${()=>ok&&onSave({...f,entry:+f.entry,exit:f.exit?+f.exit:null,qty:+f.qty,fees:+f.fees||0,stopLoss:f.stopLoss?+f.stopLoss:null,profitTarget:f.profitTarget?+f.profitTarget:null})} disabled=${!ok} style=${{flex:1,justifyContent:'center'}}>${initial?'Speichern':'Trade hinzufügen'}</${Btn}>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Dashboard
+function Dashboard({trades,onEdit,capital,onCapital}){
+  const today=new Date().toISOString().slice(0,10);
+  const cl=trades.filter(t=>t.exit);
+
+  // ── Heute ──
+  const todayTrades=trades.filter(t=>t.date===today);
+  const todayCl=todayTrades.filter(t=>t.exit);
+  const todayPs=todayCl.map(pnl).filter(p=>p!==null);
+  const todayPnl=todayPs.reduce((a,b)=>a+b,0);
+  const todayW=todayPs.filter(p=>p>0).length;
+  const todayL=todayPs.filter(p=>p<0).length;
+  const todayWr=todayPs.length?todayW/todayPs.length*100:0;
+  const todayOpen=todayTrades.filter(t=>!t.exit).length;
+  const todayAvgW=todayW?todayPs.filter(p=>p>0).reduce((a,b)=>a+b,0)/todayW:0;
+  const todayAvgL=todayL?Math.abs(todayPs.filter(p=>p<0).reduce((a,b)=>a+b,0)/todayL):0;
+  const todayBest=todayPs.length?Math.max(...todayPs):null;
+  const todayWorst=todayPs.length?Math.min(...todayPs):null;
+  const todaySymbols=[...new Set(todayCl.map(t=>t.symbol))];
+  // P&L kumulativ über den Tag (nach Zeit sortiert)
+  const todaySorted=[...todayCl].sort((a,b)=>(a.time||'').localeCompare(b.time||'')||a.date.localeCompare(b.date));
+  let teq=0;const todayEqD=todaySorted.map((t,i)=>({date:t.time||String(i+1),eq:+(teq+=pnl(t)||0).toFixed(2)}));
+  const hasTodayData=todayTrades.length>0;
+
+  // ── Gesamt ──
+  const ps=cl.map(pnl).filter(p=>p!==null);
+  const ws=ps.filter(p=>p>0),ls=ps.filter(p=>p<0);
+  const tot=ps.reduce((a,b)=>a+b,0);
+  const wr=ps.length?ws.length/ps.length*100:0;
+  const avgW=ws.length?ws.reduce((a,b)=>a+b,0)/ws.length:0;
+  const avgL=ls.length?Math.abs(ls.reduce((a,b)=>a+b,0)/ls.length):0;
+  const pf=avgL>0?(avgW*ws.length)/(avgL*ls.length):Infinity;
+  const {abs:ddAbs,pct:ddPct}=calcMaxDD(trades);
+  const exp=calcExpectancy(trades);
+  const dayWr=calcDayWinPct(trades);
+  const streak=calcStreak(trades);
+  const zScore=calcZellaScore(trades);
+  const tilt=calcTilt(trades);
+  const sorted=[...cl].sort((a,b)=>a.date.localeCompare(b.date));
+  let eq=0;const eqD=sorted.map(t=>({date:t.date.slice(5),eq:+(eq+=pnl(t)||0).toFixed(2)}));
+  const mon={};sorted.forEach(t=>{const m=t.date.slice(0,7);mon[m]=(mon[m]||0)+(pnl(t)||0);});
+  const mD=Object.entries(mon).map(([m,p])=>({m:m.slice(5),p:+p.toFixed(2)}));
+  const rec=[...trades].sort((a,b)=>b.date.localeCompare(a.date)||((b.time||'').localeCompare(a.time||''))).slice(0,5);
+  const dayMap={};cl.forEach(t=>{dayMap[t.date]=(dayMap[t.date]||0)+(pnl(t)||0);});
+  const tradingDays=Object.keys(dayMap).length;
+  const winDays=Object.values(dayMap).filter(p=>p>0).length;
+  const rf=ddAbs>0?tot/ddAbs:0;
+
+  const dateFmt=new Intl.DateTimeFormat('de-DE',{weekday:'long',day:'numeric',month:'long'}).format(new Date());
+
+  return html`<div class="fi" style=${{display:'flex',flexDirection:'column',gap:20}}>
+
+    <!-- Header -->
+    <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10}}>
+      <div>
+        <h1 style=${{fontSize:22,fontWeight:800}}>Dashboard</h1>
+        <div style=${{color:C.muted,fontSize:13,marginTop:2}}>${dateFmt} · ${trades.length} Trades gesamt</div>
+      </div>
+      <div style=${{display:'flex',gap:8}}>
+        <button onClick=${onCapital} style=${{background:C.card,border:`1px solid ${C.border}`,borderRadius:9,padding:'8px 16px',color:C.text,cursor:'pointer',fontSize:13,fontWeight:600,display:'flex',alignItems:'center',gap:6}}>💰 Kapital</button>
+        <${Btn} onClick=${()=>onEdit(null)}><${Ico} n="plus" size=${14}/> Neuer Trade</${Btn}>
+      </div>
+    </div>
+
+    <!-- Kapital-Banner -->
+    ${(()=>{
+      if(!capital)return'';
+      const totalDep=capital.events.filter(e=>e.type==='deposit').reduce((s,e)=>s+e.amount,0);
+      const totalWdr=capital.events.filter(e=>e.type==='withdrawal').reduce((s,e)=>s+e.amount,0);
+      const invested=capital.initial+totalDep-totalWdr;
+      const totalPnlV=ps.reduce((a,b)=>a+b,0);
+      const balance=invested+totalPnlV;
+      const retPct=invested>0?totalPnlV/invested*100:0;
+      return html`<${Card} style=${{padding:'14px 20px',background:balance>=invested?C.green+'0A':C.red+'0A',border:`1px solid ${balance>=invested?C.green:C.red}22`}}>
+        <div style=${{display:'flex',alignItems:'center',gap:24,flexWrap:'wrap'}}>
+          <div>
+            <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:2}}>KONTOSTAND</div>
+            <div style=${{fontSize:28,fontWeight:900,color:C.text}}>${balance.toFixed(2)} <span style=${{fontSize:13,color:C.muted}}>EUR</span></div>
+          </div>
+          <div style=${{width:1,height:40,background:C.border}}></div>
+          <div><div style=${{fontSize:10,color:C.muted,fontWeight:700,marginBottom:2}}>EINGESETZT</div><div style=${{fontSize:15,fontWeight:700}}>${invested.toFixed(2)} EUR</div></div>
+          <div><div style=${{fontSize:10,color:C.muted,fontWeight:700,marginBottom:2}}>GESAMT P&L</div><div style=${{fontSize:15,fontWeight:700,color:pc(totalPnlV)}}>${totalPnlV>=0?'+':''}${totalPnlV.toFixed(2)} EUR</div></div>
+          <div><div style=${{fontSize:10,color:C.muted,fontWeight:700,marginBottom:2}}>RENDITE</div><div style=${{fontSize:15,fontWeight:700,color:pc(retPct)}}>${retPct>=0?'+':''}${retPct.toFixed(2)}%</div></div>
+          ${totalDep>0?html`<div><div style=${{fontSize:10,color:C.muted,fontWeight:700,marginBottom:2}}>EINZAHLUNGEN</div><div style=${{fontSize:15,fontWeight:700,color:C.green}}>+${totalDep.toFixed(2)} EUR</div></div>`:''}
+          <button onClick=${onCapital} style=${{marginLeft:'auto',background:'transparent',border:`1px solid ${C.border}`,borderRadius:8,padding:'6px 14px',color:C.muted,cursor:'pointer',fontSize:12,fontWeight:600}}>+ Einzahlung</button>
+        </div>
+      </${Card}>`;
+    })()}
+
+    <!-- ══ HEUTE ══ -->
+    <div>
+      <div style=${{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+        <div style=${{fontSize:11,fontWeight:800,color:C.accent,letterSpacing:'.1em'}}>HEUTE</div>
+        <div style=${{flex:1,height:1,background:C.border}}></div>
+        ${!hasTodayData?html`<span style=${{fontSize:11,color:C.muted}}>Noch keine Trades heute</span>`:''}
+      </div>
+
+      ${hasTodayData?html`<div style=${{display:'flex',flexDirection:'column',gap:12}}>
+        <!-- Tages-Hero -->
+        <${Card} style=${{padding:'18px 22px',background:todayPnl>=0?C.green+'0D':C.red+'0D',border:`1px solid ${todayPnl>=0?C.green:C.red}33`}}>
+          <div style=${{display:'flex',alignItems:'flex-start',justifyContent:'space-between',flexWrap:'wrap',gap:16}}>
+            <div>
+              <div style=${{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:4}}>TAGES P&L</div>
+              <div style=${{fontSize:40,fontWeight:900,color:todayPnl>=0?C.green:C.red,lineHeight:1}}>${todayPnl>=0?'+':''}${todayPnl.toFixed(2)}</div>
+              <div style=${{fontSize:12,color:C.muted,marginTop:6}}>${todayCl.length} abgeschlossen · ${todayOpen} offen · ${todaySymbols.join(', ')}</div>
+            </div>
+            <div style=${{display:'flex',gap:10,flexWrap:'wrap'}}>
+              <div style=${{textAlign:'center',minWidth:70}}>
+                <div style=${{fontSize:24,fontWeight:800,color:todayWr>=50?C.green:C.red}}>${todayPs.length?todayWr.toFixed(0)+'%':'–'}</div>
+                <div style=${{fontSize:10,color:C.muted,fontWeight:700}}>WIN RATE</div>
+              </div>
+              <div style=${{textAlign:'center',minWidth:70}}>
+                <div style=${{fontSize:24,fontWeight:800,color:C.text}}>${todayW}<span style=${{color:C.muted,fontSize:14}}>W</span> ${todayL}<span style=${{color:C.muted,fontSize:14}}>L</span></div>
+                <div style=${{fontSize:10,color:C.muted,fontWeight:700}}>WINS / LOSSES</div>
+              </div>
+              ${todayBest!==null?html`<div style=${{textAlign:'center',minWidth:70}}>
+                <div style=${{fontSize:18,fontWeight:800,color:C.green}}>${todayBest>=0?'+':''}${todayBest.toFixed(2)}</div>
+                <div style=${{fontSize:10,color:C.muted,fontWeight:700}}>BESTER TRADE</div>
+              </div>`:''}
+              ${todayWorst!==null&&todayL>0?html`<div style=${{textAlign:'center',minWidth:70}}>
+                <div style=${{fontSize:18,fontWeight:800,color:C.red}}>${todayWorst.toFixed(2)}</div>
+                <div style=${{fontSize:10,color:C.muted,fontWeight:700}}>SCHLECHTESTER</div>
+              </div>`:''}
+            </div>
+          </div>
+        </${Card}>
+
+        <!-- Tages-Details -->
+        <div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10}}>
+          <${SC} label="Ø Gewinn heute" value=${todayAvgW?'+'+fd(todayAvgW):'–'} color=${C.green}/>
+          <${SC} label="Ø Verlust heute" value=${todayAvgL?'-'+fd(todayAvgL):'–'} color=${C.red}/>
+          <${SC} label="Trades heute" value=${todayTrades.length} sub=${todayCl.length+' fertig, '+todayOpen+' offen'}/>
+          <${SC} label="Instrumente" value=${todaySymbols.length} sub=${todaySymbols.slice(0,3).join(', ')}/>
+        </div>
+
+        ${todayEqD.length>1?html`<${Card} style=${{padding:18}}>
+          <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:10}}>TAGES EQUITY KURVE</div>
+          <${AreaChart} data=${todayEqD} xKey="date" yKey="eq" color=${todayPnl>=0?C.green:C.red} h=${100}/>
+        </${Card}>`:''}
+
+        <!-- Heutige Trades Tabelle -->
+        <${Card} style=${{padding:0}}>
+          <div style=${{padding:'10px 16px',borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>TRADES HEUTE</div>
+          <div style=${{overflowX:'auto'}}><table style=${{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+            <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>
+              ${['Zeit','Symbol','Seite','P&L','R-Mul.','Setup'].map(h=>html`<th key=${h} style=${{padding:'8px 14px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted}}>${h}</th>`)}
+            </tr></thead>
+            <tbody>${todayTrades.map(t=>{const p=pnl(t),rm=calcRMul(t);return html`<tr key=${t.id} class="hr" style=${{borderBottom:`1px solid ${C.border}10`}} onClick=${()=>onEdit(t)}>
+              <td style=${{padding:'9px 14px',color:C.muted,fontSize:12}}>${t.time||'–'}</td>
+              <td style=${{padding:'9px 14px',fontFamily:'monospace',fontWeight:700}}>${t.symbol}</td>
+              <td style=${{padding:'9px 14px',fontWeight:700,fontSize:12,color:t.side==='Long'?C.green:C.red}}>${t.side==='Long'?'▲':'▼'} ${t.side}</td>
+              <td style=${{padding:'9px 14px',fontFamily:'monospace',fontWeight:700,color:pc(p)}}>${p===null?html`<${Badge} color=${C.yellow}>Offen</${Badge}>`:((p>=0?'+':'')+fd(p))}</td>
+              <td style=${{padding:'9px 14px',fontFamily:'monospace',fontSize:12,color:pc(rm)}}>${rm===null?'–':(rm>=0?'+':'')+rm.toFixed(2)+'R'}</td>
+              <td style=${{padding:'9px 14px',fontSize:12,color:C.muted}}>${t.setup||'–'}</td>
+            </tr>`;})}
+            </tbody>
+          </table></div>
+        </${Card}>
+      </div>`:html`<${Card} style=${{padding:'24px 22px',textAlign:'center',border:`1px dashed ${C.border}`}}>
+        <div style=${{fontSize:32,marginBottom:8}}>📈</div>
+        <div style=${{fontSize:14,color:C.muted,marginBottom:14}}>Noch keine Trades für heute erfasst.</div>
+        <button onClick=${()=>onEdit(null)} style=${{background:C.accent,color:'#000',border:'none',borderRadius:9,padding:'10px 24px',fontWeight:700,cursor:'pointer',fontSize:14}}>+ Ersten Trade heute hinzufügen</button>
+      </${Card}>`}
+    </div>
+
+    <!-- ══ GESAMT ══ -->
+    <div>
+      <div style=${{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+        <div style=${{fontSize:11,fontWeight:800,color:C.muted,letterSpacing:'.1em'}}>GESAMT</div>
+        <div style=${{flex:1,height:1,background:C.border}}></div>
+      </div>
+
+      <div style=${{display:'flex',flexDirection:'column',gap:14}}>
+        <div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:10}}>
+          <${SC} label="Gesamt P&L" value=${fd(tot)} color=${tot>=0?C.green:C.red}/>
+          <${SC} label="Win Rate" value=${wr.toFixed(1)+'%'} sub=${ws.length+'W / '+ls.length+'L'} color=${wr>=50?C.green:C.red}/>
+          <${SC} label="Day Win %" value=${dayWr.toFixed(1)+'%'} sub=${winDays+' / '+tradingDays+' Tage'} color=${dayWr>=50?C.green:C.red}/>
+          <${SC} label="Expectancy" value=${fd(exp)} color=${exp>=0?C.green:C.red}/>
+          <${SC} label="Profit Factor" value=${isFinite(pf)?pf.toFixed(2):'∞'} color=${pf>=1.5?C.green:pf>=1?C.yellow:C.red}/>
+          <${SC} label="Max Drawdown" value=${fd(-ddAbs)} sub=${ddPct.toFixed(1)+'%'} color=${C.red}/>
+          <${SC} label="Recovery Factor" value=${isFinite(rf)&&rf>0?rf.toFixed(2):'–'} color=${rf>=2?C.green:rf>=1?C.yellow:C.red}/>
+          <${SC} label="Ø Gewinn" value=${fd(avgW)} color=${C.green}/>
+          <${SC} label="Ø Verlust" value=${fd(-avgL)} color=${C.red}/>
+          <${SC} label="Trade Streak" value=${streak.trade===0?'–':(streak.trade>0?'+':'')+streak.trade} sub=${streak.trade>0?'Gewinne':'Verluste'} color=${streak.trade>0?C.green:streak.trade<0?C.red:C.muted}/>
+          <${SC} label="Day Streak" value=${streak.day===0?'–':(streak.day>0?'+':'')+streak.day} sub=${streak.day>0?'Gewinn-Tage':'Verlust-Tage'} color=${streak.day>0?C.green:streak.day<0?C.red:C.muted}/>
+          <${SC} label="Offene Pos." value=${trades.filter(t=>!t.exit).length} sub="Positionen offen"/>
+        </div>
+
+        <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:14}} class="g3">
+          <${ZellaGauge} score=${zScore}/>
+          <${TiltWidget} score=${tilt}/>
+          <${Card} style=${{padding:16}}><div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:10}}>KALENDER</div><${CalendarWidget} trades=${trades}/></${Card}>
+        </div>
+
+        <div style=${{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14}} class="g2">
+          <${Card} style=${{padding:18}}><div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:12}}>EQUITY KURVE</div><${AreaChart} data=${eqD} xKey="date" yKey="eq" color=${tot>=0?C.green:C.red}/></${Card}>
+          <${Card} style=${{padding:18}}><div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:12}}>MONATS P&L</div><${BarChart} data=${mD} xKey="m" yKey="p"/></${Card}>
+        </div>
+
+        <${Card}>
+          <div style=${{padding:'12px 18px',borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>LETZTE TRADES</div>
+          <div style=${{overflowX:'auto'}}><table style=${{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+            <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>${['Datum','Symbol','Seite','Einstieg','Ausstieg','P&L $','R-Mul.','Rating'].map(h=>html`<th key=${h} style=${{padding:'9px 14px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted,whiteSpace:'nowrap'}}>${h}</th>`)}</tr></thead>
+            <tbody>${rec.map(t=>{const p=pnl(t),rm=calcRMul(t);return html`<tr key=${t.id} class="hr" style=${{borderBottom:`1px solid ${C.border}20`}} onClick=${()=>onEdit(t)}>
+              <td style=${{padding:'10px 14px',color:C.muted,fontSize:12}}>${t.date}</td>
+              <td style=${{padding:'10px 14px',fontFamily:'monospace',fontWeight:700}}>${t.symbol}</td>
+              <td style=${{padding:'10px 14px',fontWeight:700,fontSize:12,color:t.side==='Long'?C.green:C.red}}>${t.side==='Long'?'▲':'▼'} ${t.side}</td>
+              <td style=${{padding:'10px 14px',fontFamily:'monospace'}}>$${t.entry.toFixed(2)}</td>
+              <td style=${{padding:'10px 14px',fontFamily:'monospace'}}>${t.exit?'$'+t.exit.toFixed(2):html`<${Badge} color=${C.yellow}>Offen</${Badge}>`}</td>
+              <td style=${{padding:'10px 14px',fontFamily:'monospace',fontWeight:700,color:pc(p)}}>${p===null?'–':(p>=0?'+':'')+fd(p)}</td>
+              <td style=${{padding:'10px 14px',fontFamily:'monospace',fontSize:12,color:pc(rm)}}>${rm===null?'–':(rm>=0?'+':'')+rm.toFixed(2)+'R'}</td>
+              <td style=${{padding:'10px 14px'}}>${t.rating>0?html`<${Stars} value=${t.rating}/>`:html`<span style=${{color:C.muted,fontSize:12}}>–</span>`}</td>
+            </tr>`;})}
+            </tbody>
+          </table></div>
+        </${Card}>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ─── JOURNAL ───────────────────────────────────────────────────────────────
+function Journal({trades,setTrades,onEdit}){
+  const [fSide,setFSide]=React.useState('All');
+  const [fTag,setFTag]=React.useState('');
+  const [fSym,setFSym]=React.useState('');
+  const [fRev,setFRev]=React.useState('All');
+  const [sort,setSort]=React.useState({k:'date',d:-1});
+  const [expanded,setExpanded]=React.useState(null);
+  const [checked,setChecked]=React.useState(new Set());
+
+  let rows=[...trades];
+  if(fSide!=='All') rows=rows.filter(t=>t.side===fSide);
+  if(fSym) rows=rows.filter(t=>t.symbol.toUpperCase().includes(fSym.toUpperCase()));
+  if(fTag) rows=rows.filter(t=>Object.values(t.tags||{}).includes(fTag));
+  if(fRev==='Yes') rows=rows.filter(t=>t.reviewed);
+  if(fRev==='No') rows=rows.filter(t=>!t.reviewed);
+  rows.sort((a,b)=>{
+    let av=a[sort.k],bv=b[sort.k];
+    if(sort.k==='pnl'){av=pnl(a);bv=pnl(b);}
+    if(sort.k==='rmul'){av=calcRMul(a);bv=calcRMul(b);}
+    if(av===null||av===undefined) av=-Infinity;
+    if(bv===null||bv===undefined) bv=-Infinity;
+    return av<bv?-sort.d:av>bv?sort.d:0;
+  });
+
+  function toggleSort(k){setSort(s=>s.k===k?{k,d:-s.d}:{k,d:-1});}
+  function SH({k,children}){const a=sort.k===k;return html`<th key=${k} onClick=${()=>toggleSort(k)} style=${{padding:'9px 14px',textAlign:'left',fontSize:10,fontWeight:700,color:a?C.accent:C.muted,letterSpacing:'.07em',whiteSpace:'nowrap',cursor:'pointer',userSelect:'none'}}>${children}${a?(sort.d>0?' ↑':' ↓'):''}</th>`;}
+
+  const allTagVals=[...new Set(trades.flatMap(t=>Object.values(t.tags||{})).filter(Boolean))];
+  const allIds=rows.map(t=>t.id);
+  const allChecked=allIds.length>0&&allIds.every(id=>checked.has(id));
+  const someChecked=checked.size>0;
+
+  function toggleAll(){
+    if(allChecked) setChecked(new Set());
+    else setChecked(new Set(allIds));
+  }
+  function toggleOne(id,e){
+    e.stopPropagation();
+    setChecked(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
+  }
+  function deleteSelected(){
+    if(!confirm(`${checked.size} Trade(s) wirklich löschen?`))return;
+    setTrades(ts=>ts.filter(t=>!checked.has(t.id)));
+    setChecked(new Set());
+  }
+
+  return html`<div style=${{display:'flex',flexDirection:'column',gap:16}}>
+    <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+      <div style=${{fontSize:18,fontWeight:700}}>Journal</div>
+      <div style=${{display:'flex',gap:8,alignItems:'center'}}>
+        ${someChecked?html`<button onClick=${deleteSelected} style=${{background:C.red,color:'#fff',border:'none',borderRadius:8,padding:'8px 18px',fontWeight:700,cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',gap:6}}>
+          🗑 ${checked.size} löschen
+        </button>`:''}
+        <button onClick=${()=>onEdit(null)} style=${{background:C.accent,color:'#000',border:'none',borderRadius:8,padding:'8px 18px',fontWeight:700,cursor:'pointer',fontSize:13}}>+ Trade</button>
+      </div>
+    </div>
+
+    <${Card} style=${{padding:'12px 16px'}}>
+      <div style=${{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+        <input placeholder="Symbol…" value=${fSym} onInput=${e=>setFSym(e.target.value)} style=${{background:'var(--inp-bg)',border:'1px solid var(--inp-border)',borderRadius:7,padding:'7px 11px',color:C.text,fontSize:13,width:110}}/>
+        ${['All','Long','Short'].map(s=>html`<button key=${s} onClick=${()=>setFSide(s)} style=${{background:fSide===s?C.accent:'transparent',color:fSide===s?'#000':C.muted,border:`1px solid ${fSide===s?C.accent:C.border}`,borderRadius:7,padding:'7px 14px',fontSize:12,cursor:'pointer',fontWeight:600}}>${s}</button>`)}
+        <select value=${fTag} onChange=${e=>setFTag(e.target.value)} style=${{background:'var(--inp-bg)',border:'1px solid var(--inp-border)',borderRadius:7,padding:'7px 11px',color:C.text,fontSize:13}}>
+          <option value="">Alle Tags</option>
+          ${allTagVals.map(v=>html`<option key=${v} value=${v}>${v}</option>`)}
+        </select>
+        <select value=${fRev} onChange=${e=>setFRev(e.target.value)} style=${{background:'var(--inp-bg)',border:'1px solid var(--inp-border)',borderRadius:7,padding:'7px 11px',color:C.text,fontSize:13}}>
+          ${['All','Yes','No'].map(v=>html`<option key=${v} value=${v}>${v==='All'?'Alle':v==='Yes'?'Reviewed':'Nicht reviewed'}</option>`)}
+        </select>
+        ${someChecked?html`<span style=${{fontSize:12,color:C.accent,fontWeight:600}}>${checked.size} ausgewählt</span>`:''}
+      </div>
+    </${Card}>
+
+    <${Card} style=${{padding:0}}>
+      <div style=${{overflowX:'auto'}}><table style=${{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+        <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>
+          <th style=${{padding:'9px 10px 9px 14px',width:36}}>
+            <input type="checkbox" checked=${allChecked} onChange=${toggleAll}
+              style=${{accentColor:C.accent,width:15,height:15,cursor:'pointer'}}
+              title=${allChecked?'Alle abwählen':'Alle auswählen'}/>
+          </th>
+          <${SH} k="date">Datum</${SH}>
+          <${SH} k="symbol">Symbol</${SH}>
+          <${SH} k="side">Seite</${SH}>
+          <${SH} k="type">Asset</${SH}>
+          <${SH} k="entry">Einstieg</${SH}>
+          <${SH} k="exit">Ausstieg</${SH}>
+          <${SH} k="qty">Menge</${SH}>
+          <${SH} k="pnl">P&L $</${SH}>
+          <${SH} k="rmul">R-Mul.</${SH}>
+          <th style=${{padding:'9px 14px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>Tags</th>
+          <${SH} k="rating">Rating</${SH}>
+          <th style=${{padding:'9px 14px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>Rev.</th>
+          <th style=${{padding:'9px 14px'}}></th>
+        </tr></thead>
+        <tbody>${rows.map(t=>{
+          const p=pnl(t),rm=calcRMul(t);
+          const tagVals=Object.values(t.tags||{}).filter(Boolean);
+          const isChecked=checked.has(t.id);
+          const isExpanded=expanded===t.id;
+          return html`<tr key=${t.id} class="hr"
+            style=${{borderBottom:`1px solid ${C.border}20`,background:isChecked?C.accent+'11':isExpanded?C.card2:'transparent',cursor:'pointer'}}
+            onClick=${()=>setExpanded(isExpanded?null:t.id)}>
+            <td style=${{padding:'10px 10px 10px 14px'}} onClick=${e=>toggleOne(t.id,e)}>
+              <input type="checkbox" checked=${isChecked} onChange=${()=>{}}
+                style=${{accentColor:C.accent,width:15,height:15,cursor:'pointer',pointerEvents:'none'}}/>
+            </td>
+            <td style=${{padding:'10px 14px',color:C.muted,fontSize:12,whiteSpace:'nowrap'}}>${t.date}${t.time?html` <span style=${{fontSize:10}}>${t.time}</span>`:''}</td>
+            <td style=${{padding:'10px 14px',fontFamily:'monospace',fontWeight:700}}>${t.symbol}</td>
+            <td style=${{padding:'10px 14px',fontWeight:700,fontSize:12,color:t.side==='Long'?C.green:C.red}}>${t.side==='Long'?'▲':'▼'} ${t.side}</td>
+            <td style=${{padding:'10px 14px',fontSize:12,color:C.muted}}>${t.type||t.asset||'–'}</td>
+            <td style=${{padding:'10px 14px',fontFamily:'monospace'}}>$${t.entry.toFixed(2)}</td>
+            <td style=${{padding:'10px 14px',fontFamily:'monospace'}}>${t.exit?'$'+t.exit.toFixed(2):html`<${Badge} color=${C.yellow}>Offen</${Badge}>`}</td>
+            <td style=${{padding:'10px 14px',fontFamily:'monospace'}}>${t.qty}</td>
+            <td style=${{padding:'10px 14px',fontFamily:'monospace',fontWeight:700,color:pc(p)}}>${p===null?'–':(p>=0?'+':'')+fd(p)}</td>
+            <td style=${{padding:'10px 14px',fontFamily:'monospace',fontSize:12,color:pc(rm)}}>${rm===null?'–':(rm>=0?'+':'')+rm.toFixed(2)+'R'}</td>
+            <td style=${{padding:'10px 14px'}}>
+              <div style=${{display:'flex',gap:4,flexWrap:'wrap'}}>
+                ${tagVals.map(v=>html`<span key=${v} style=${{background:C.accent+'22',color:C.accent,borderRadius:5,padding:'2px 7px',fontSize:10,fontWeight:600}}>${v}</span>`)}
+              </div>
+            </td>
+            <td style=${{padding:'10px 14px'}}>${t.rating>0?html`<${Stars} value=${t.rating}/>`:html`<span style=${{color:C.muted,fontSize:12}}>–</span>`}</td>
+            <td style=${{padding:'10px 14px',textAlign:'center'}}>${t.reviewed?html`<span style=${{color:C.green,fontSize:14}} title="Reviewed">✓</span>`:html`<span style=${{color:C.muted,fontSize:12}}>–</span>`}</td>
+            <td style=${{padding:'10px 14px'}} onClick=${e=>e.stopPropagation()}>
+              <button onClick=${()=>onEdit(t)} style=${{background:'transparent',border:`1px solid ${C.border}`,borderRadius:6,padding:'4px 10px',color:C.muted,fontSize:12,cursor:'pointer'}}>✎</button>
+            </td>
+          </tr>
+          ${isExpanded&&(t.notes||t.setup||t.session)?html`<tr key=${'x'+t.id} style=${{borderBottom:`1px solid ${C.border}20`,background:C.card2}}>
+            <td colSpan="14" style=${{padding:'10px 18px'}}>
+              <div style=${{display:'flex',gap:20,flexWrap:'wrap',fontSize:12}}>
+                ${t.setup?html`<span><span style=${{color:C.muted}}>Setup: </span><span style=${{fontWeight:600,color:C.accent}}>${t.setup}</span></span>`:''}
+                ${t.session?html`<span><span style=${{color:C.muted}}>Session: </span><span style=${{fontWeight:600}}>${t.session}</span></span>`:''}
+                ${t.notes?html`<span style=${{color:C.muted,fontStyle:'italic'}}>${t.notes}</span>`:''}
+              </div>
+            </td>
+          </tr>`:''}`;
+        })}</tbody>
+      </table></div>
+      <div style=${{padding:'10px 18px',fontSize:12,color:C.muted,borderTop:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span>${rows.length} Trades${someChecked?html` · <span style=${{color:C.accent,fontWeight:600}}>${checked.size} ausgewählt</span>`:''}
+        </span>
+        ${someChecked?html`<button onClick=${deleteSelected} style=${{background:C.red+'22',border:`1px solid ${C.red}`,borderRadius:7,padding:'5px 14px',color:C.red,cursor:'pointer',fontSize:12,fontWeight:600}}>🗑 ${checked.size} löschen</button>`:''}
+      </div>
+    </${Card}>
+  </div>`;
+}
+
+// ─── REPORTS ───────────────────────────────────────────────────────────────
+function Reports({trades,plays}){
+  const [tab,setTab]=React.useState('overview');
+  const tabs=[{k:'overview',l:'Übersicht'},{k:'calendar',l:'Kalender'},{k:'time',l:'Zeit & Tag'},{k:'session',l:'Session'},{k:'strategy',l:'Strategie'},{k:'symbol',l:'Symbol'},{k:'asset',l:'Asset-Typ'},{k:'wl',l:'W/L Vergleich'},{k:'tags',l:'Tags'}];
+  const closed=trades.filter(t=>t.exit);
+
+  // ── Overview sub-view ──
+  function Overview(){
+    const wins=closed.filter(t=>pnl(t)>0),losses=closed.filter(t=>pnl(t)<0);
+    const avgW=wins.length?wins.reduce((s,t)=>s+pnl(t),0)/wins.length:0;
+    const avgL=losses.length?Math.abs(losses.reduce((s,t)=>s+pnl(t),0)/losses.length):0;
+    const pf=avgL>0?(wins.reduce((s,t)=>s+pnl(t),0))/Math.abs(losses.reduce((s,t)=>s+pnl(t),0)):null;
+    const ex=calcExpectancy(closed);
+    const dd=calcMaxDD(closed);
+    const zs=calcZellaScore(closed);
+    const items=[
+      {l:'Trades',v:closed.length},{l:'Gewinner',v:wins.length},{l:'Verlierer',v:losses.length},
+      {l:'Win Rate',v:closed.length?(wins.length/closed.length*100).toFixed(1)+'%':'–'},
+      {l:'Avg. Win',v:avgW?'+'+fd(avgW):'–'},{l:'Avg. Loss',v:avgL?'-'+fd(avgL):'–'},
+      {l:'Profit Factor',v:pf?pf.toFixed(2):'–'},{l:'Expectancy',v:ex?fd(ex):'–'},
+      {l:'Max Drawdown',v:dd.abs?'-'+fd(dd.abs)+' ('+dd.pct.toFixed(1)+'%)':'–'},
+      {l:'Zella Score',v:zs>0?zs.toFixed(0)+'/100':'<3 Trades'},
+    ];
+    return html`<div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:12}}>
+      ${items.map(i=>html`<${Card} key=${i.l} style=${{padding:'16px 18px'}}>
+        <div style=${{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:'.07em',marginBottom:6}}>${i.l}</div>
+        <div style=${{fontSize:22,fontWeight:800}}>${i.v}</div>
+      </${Card}>`)}
+    </div>`;
+  }
+
+  // ── Calendar sub-view ──
+  function CalView(){
+    const [mo,setMo]=React.useState(()=>new Date());
+    const yr=mo.getFullYear(),mn=mo.getMonth();
+    const days={};
+    trades.forEach(t=>{
+      const p=pnl(t);
+      if(!t.exit||p===null) return;
+      const d=t.date;
+      if(!days[d]) days[d]={p:0,n:0};
+      days[d].p+=p; days[d].n++;
+    });
+    const first=new Date(yr,mn,1);
+    let startDow=first.getDay(); if(startDow===0)startDow=7;
+    const totalCells=startDow-1+new Date(yr,mn+1,0).getDate();
+    const cells=Array.from({length:Math.ceil(totalCells/7)*7},(_,i)=>{
+      const d=i-(startDow-2);
+      if(d<1||d>new Date(yr,mn+1,0).getDate()) return null;
+      const ds=`${yr}-${String(mn+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      return {d,ds,info:days[ds]||null};
+    });
+    const fmt=new Intl.DateTimeFormat('de-DE',{month:'long',year:'numeric'});
+    return html`<${Card} style=${{padding:18}}>
+      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+        <button onClick=${()=>setMo(new Date(yr,mn-1,1))} style=${{background:'transparent',border:`1px solid ${C.border}`,borderRadius:7,padding:'5px 12px',color:C.text,cursor:'pointer',fontSize:16}}>‹</button>
+        <div style=${{fontWeight:700,fontSize:15}}>${fmt.format(mo)}</div>
+        <button onClick=${()=>setMo(new Date(yr,mn+1,1))} style=${{background:'transparent',border:`1px solid ${C.border}`,borderRadius:7,padding:'5px 12px',color:C.text,cursor:'pointer',fontSize:16}}>›</button>
+      </div>
+      <div style=${{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4}}>
+        ${['Mo','Di','Mi','Do','Fr','Sa','So'].map(d=>html`<div key=${d} style=${{textAlign:'center',fontSize:10,fontWeight:700,color:C.muted,padding:'4px 0'}}>${d}</div>`)}
+        ${cells.map((c,i)=>{
+          if(!c) return html`<div key=${'e'+i}></div>`;
+          const bg=c.info?(c.info.p>0?C.green+'33':C.red+'33'):C.card2;
+          const col=c.info?(c.info.p>0?C.green:C.red):C.muted;
+          return html`<div key=${c.ds} style=${{background:bg,borderRadius:7,padding:'6px 4px',textAlign:'center',minHeight:48}}>
+            <div style=${{fontSize:11,fontWeight:700,color:c.info?col:C.muted}}>${c.d}</div>
+            ${c.info?html`<div style=${{fontSize:10,color:col,fontWeight:600}}>${c.info.p>=0?'+':''}${fd(c.info.p)}</div><div style=${{fontSize:9,color:C.muted}}>${c.info.n}T</div>`:''}
+          </div>`;
+        })}
+      </div>
+    </${Card}>`;
+  }
+
+  // ── Time & Day sub-view ──
+  function TimeView(){
+    const hours={};
+    const dow={Mo:0,Di:0,Mi:0,Do:0,Fr:0,Sa:0,So:0};
+    const dowN={Mo:0,Di:0,Mi:0,Do:0,Fr:0,Sa:0,So:0};
+    const dowK=['Mo','Di','Mi','Do','Fr','Sa','So'];
+    closed.forEach(t=>{
+      const p=pnl(t);
+      if(p===null) return;
+      if(t.time){const h=parseInt(t.time.split(':')[0]);if(!hours[h]){hours[h]={p:0,n:0};}hours[h].p+=p;hours[h].n++;}
+      const dt=new Date(t.date);
+      let d=dt.getDay();if(d===0)d=7;
+      const dk=dowK[d-1];
+      dow[dk]+=p;dowN[dk]++;
+    });
+    const hData=Object.entries(hours).sort((a,b)=>a[0]-b[0]).map(([h,v])=>({m:h+':00',p:v.p}));
+    const dData=dowK.map(k=>({m:k,p:dow[k]}));
+    return html`<div style=${{display:'flex',flexDirection:'column',gap:16}}>
+      ${hData.length?html`<${Card} style=${{padding:18}}>
+        <div style=${{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:12}}>P&L NACH UHRZEIT</div>
+        <${BarChart} data=${hData} xKey="m" yKey="p"/>
+      </${Card}>`:''}
+      <${Card} style=${{padding:18}}>
+        <div style=${{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:12}}>P&L NACH WOCHENTAG</div>
+        <${BarChart} data=${dData} xKey="m" yKey="p"/>
+      </${Card}>
+    </div>`;
+  }
+
+  // ── Symbol sub-view ──
+  function SymbolView(){
+    const byS={};
+    closed.forEach(t=>{
+      const p=pnl(t);if(p===null)return;
+      if(!byS[t.symbol])byS[t.symbol]={p:0,n:0,w:0};
+      byS[t.symbol].p+=p;byS[t.symbol].n++;
+      if(p>0)byS[t.symbol].w++;
+    });
+    const rows=Object.entries(byS).sort((a,b)=>b[1].p-a[1].p);
+    return html`<${Card} style=${{padding:0}}>
+      <table style=${{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+        <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>
+          ${['Symbol','Trades','Win Rate','Gesamt P&L'].map(h=>html`<th key=${h} style=${{padding:'10px 16px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>${h}</th>`)}
+        </tr></thead>
+        <tbody>${rows.map(([s,v])=>html`<tr key=${s} class="hr" style=${{borderBottom:`1px solid ${C.border}20`}}>
+          <td style=${{padding:'10px 16px',fontFamily:'monospace',fontWeight:700}}>${s}</td>
+          <td style=${{padding:'10px 16px'}}>${v.n}</td>
+          <td style=${{padding:'10px 16px',color:v.w/v.n>=0.5?C.green:C.red}}>${(v.w/v.n*100).toFixed(1)}%</td>
+          <td style=${{padding:'10px 16px',fontFamily:'monospace',fontWeight:700,color:pc(v.p)}}>${v.p>=0?'+':''}${fd(v.p)}</td>
+        </tr>`)}
+        </tbody>
+      </table>
+    </${Card}>`;
+  }
+
+  // ── W/L Compare sub-view ──
+  function WLView(){
+    const wins=closed.filter(t=>pnl(t)>0),losses=closed.filter(t=>pnl(t)<0);
+    const avgW=wins.length?wins.reduce((s,t)=>s+pnl(t),0)/wins.length:0;
+    const avgL=losses.length?losses.reduce((s,t)=>s+pnl(t),0)/losses.length:0;
+    const maxW=wins.length?Math.max(...wins.map(t=>pnl(t))):0;
+    const maxL=losses.length?Math.min(...losses.map(t=>pnl(t))):0;
+    const avgRW=wins.filter(t=>calcRMul(t)!==null).map(t=>calcRMul(t));
+    const avgRL=losses.filter(t=>calcRMul(t)!==null).map(t=>calcRMul(t));
+    const mAvgRW=avgRW.length?avgRW.reduce((a,b)=>a+b,0)/avgRW.length:null;
+    const mAvgRL=avgRL.length?avgRL.reduce((a,b)=>a+b,0)/avgRL.length:null;
+    const rows=[
+      {l:'Anzahl',w:wins.length,lv:losses.length},
+      {l:'Ø P&L',w:'+'+fd(avgW),lv:fd(avgL)},
+      {l:'Max P&L',w:'+'+fd(maxW),lv:fd(maxL)},
+      {l:'Ø R-Multiple',w:mAvgRW!==null?'+'+mAvgRW.toFixed(2)+'R':'–',lv:mAvgRL!==null?mAvgRL.toFixed(2)+'R':'–'},
+    ];
+    return html`<${Card} style=${{padding:0}}>
+      <table style=${{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+        <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>
+          <th style=${{padding:'10px 16px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>Metrik</th>
+          <th style=${{padding:'10px 16px',textAlign:'left',fontSize:10,fontWeight:700,color:C.green,letterSpacing:'.07em'}}>Gewinner</th>
+          <th style=${{padding:'10px 16px',textAlign:'left',fontSize:10,fontWeight:700,color:C.red,letterSpacing:'.07em'}}>Verlierer</th>
+        </tr></thead>
+        <tbody>${rows.map(r=>html`<tr key=${r.l} class="hr" style=${{borderBottom:`1px solid ${C.border}20`}}>
+          <td style=${{padding:'10px 16px',color:C.muted}}>${r.l}</td>
+          <td style=${{padding:'10px 16px',fontWeight:700,color:C.green}}>${r.w}</td>
+          <td style=${{padding:'10px 16px',fontWeight:700,color:C.red}}>${r.lv}</td>
+        </tr>`)}
+        </tbody>
+      </table>
+    </${Card}>`;
+  }
+
+  // ── Tags sub-view ──
+  function TagsView(){
+    const tagPnl={};
+    closed.forEach(t=>{
+      const p=pnl(t);if(p===null)return;
+      Object.values(t.tags||{}).filter(Boolean).forEach(v=>{
+        if(!tagPnl[v]){tagPnl[v]={p:0,n:0,w:0};}
+        tagPnl[v].p+=p;tagPnl[v].n++;
+        if(p>0)tagPnl[v].w++;
+      });
+    });
+    const rows=Object.entries(tagPnl).sort((a,b)=>b[1].p-a[1].p);
+    if(!rows.length) return html`<${Card} style=${{padding:32,textAlign:'center',color:C.muted}}>Keine Tag-Daten vorhanden.</${Card}>`;
+    return html`<${Card} style=${{padding:0}}>
+      <table style=${{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+        <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>
+          ${['Tag','Trades','Win Rate','Gesamt P&L'].map(h=>html`<th key=${h} style=${{padding:'10px 16px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>${h}</th>`)}
+        </tr></thead>
+        <tbody>${rows.map(([tag,v])=>html`<tr key=${tag} class="hr" style=${{borderBottom:`1px solid ${C.border}20`}}>
+          <td style=${{padding:'10px 16px'}}><span style=${{background:C.accent+'22',color:C.accent,borderRadius:5,padding:'3px 9px',fontSize:11,fontWeight:600}}>${tag}</span></td>
+          <td style=${{padding:'10px 16px'}}>${v.n}</td>
+          <td style=${{padding:'10px 16px',color:v.w/v.n>=0.5?C.green:C.red}}>${(v.w/v.n*100).toFixed(1)}%</td>
+          <td style=${{padding:'10px 16px',fontFamily:'monospace',fontWeight:700,color:pc(v.p)}}>${v.p>=0?'+':''}${fd(v.p)}</td>
+        </tr>`)}
+        </tbody>
+      </table>
+    </${Card}>`;
+  }
+
+  // ── Session sub-view ──
+  function SessionView(){
+    const sessions={};
+    closed.forEach(t=>{
+      const key=t.session||'Keine Session';
+      const p=pnl(t);if(p===null)return;
+      if(!sessions[key]){sessions[key]={p:0,n:0,w:0};}
+      sessions[key].p+=p;sessions[key].n++;
+      if(p>0)sessions[key].w++;
+    });
+    const rows=Object.entries(sessions).sort((a,b)=>b[1].p-a[1].p);
+    if(!rows.length) return html`<${Card} style=${{padding:32,textAlign:'center',color:C.muted}}>Keine Session-Daten. Session beim Trade eintragen.</${Card}>`;
+    return html`<div style=${{display:'flex',flexDirection:'column',gap:16}}>
+      <${Card} style=${{padding:18}}>
+        <div style=${{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:12}}>P&L NACH SESSION</div>
+        <${BarChart} data=${rows.map(([k,v])=>({m:k.split(' ')[0],p:+v.p.toFixed(2)}))} xKey="m" yKey="p"/>
+      </${Card}>
+      <${Card} style=${{padding:0}}>
+        <table style=${{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+          <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>
+            ${['Session','Trades','Win Rate','Avg P&L','Gesamt P&L'].map(h=>html`<th key=${h} style=${{padding:'10px 16px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>${h}</th>`)}
+          </tr></thead>
+          <tbody>${rows.map(([k,v])=>html`<tr key=${k} class="hr" style=${{borderBottom:`1px solid ${C.border}20`}}>
+            <td style=${{padding:'10px 16px',fontWeight:600}}>${k}</td>
+            <td style=${{padding:'10px 16px'}}>${v.n}</td>
+            <td style=${{padding:'10px 16px',fontWeight:700,color:v.w/v.n>=0.5?C.green:C.red}}>${(v.w/v.n*100).toFixed(1)}%</td>
+            <td style=${{padding:'10px 16px',fontFamily:'monospace',color:pc(v.p/v.n)}}>${v.p/v.n>=0?'+':''}${fd(v.p/v.n)}</td>
+            <td style=${{padding:'10px 16px',fontFamily:'monospace',fontWeight:700,color:pc(v.p)}}>${v.p>=0?'+':''}${fd(v.p)}</td>
+          </tr>`)}
+          </tbody>
+        </table>
+      </${Card}>
+    </div>`;
+  }
+
+  // ── Strategy sub-view ──
+  function StrategyView(){
+    const strats={};
+    closed.forEach(t=>{
+      const key=t.setup||'Kein Setup';
+      const p=pnl(t);if(p===null)return;
+      if(!strats[key]){strats[key]={p:0,n:0,w:0,rs:[]};}
+      strats[key].p+=p;strats[key].n++;
+      if(p>0)strats[key].w++;
+      const rm=calcRMul(t);if(rm!==null)strats[key].rs.push(rm);
+    });
+    const rows=Object.entries(strats).sort((a,b)=>b[1].p-a[1].p);
+    if(!rows.length) return html`<${Card} style=${{padding:32,textAlign:'center',color:C.muted}}>Keine Strategie-Daten. Setup beim Trade eintragen.</${Card}>`;
+    return html`<div style=${{display:'flex',flexDirection:'column',gap:16}}>
+      <${Card} style=${{padding:18}}>
+        <div style=${{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:12}}>P&L PRO STRATEGIE</div>
+        <${BarChart} data=${rows.map(([k,v])=>({m:k,p:+v.p.toFixed(2)}))} xKey="m" yKey="p"/>
+      </${Card}>
+      <${Card} style=${{padding:0}}>
+        <table style=${{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+          <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>
+            ${['Strategie','Trades','Win Rate','Ø R-Multiple','Avg P&L','Gesamt P&L'].map(h=>html`<th key=${h} style=${{padding:'10px 16px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>${h}</th>`)}
+          </tr></thead>
+          <tbody>${rows.map(([k,v])=>{
+            const avgR=v.rs.length?v.rs.reduce((a,b)=>a+b,0)/v.rs.length:null;
+            return html`<tr key=${k} class="hr" style=${{borderBottom:`1px solid ${C.border}20`}}>
+              <td style=${{padding:'10px 16px',fontWeight:700}}>${k}</td>
+              <td style=${{padding:'10px 16px'}}>${v.n}</td>
+              <td style=${{padding:'10px 16px',fontWeight:700,color:v.w/v.n>=0.5?C.green:C.red}}>${(v.w/v.n*100).toFixed(1)}%</td>
+              <td style=${{padding:'10px 16px',fontFamily:'monospace',color:pc(avgR)}}>${avgR!==null?(avgR>=0?'+':'')+avgR.toFixed(2)+'R':'–'}</td>
+              <td style=${{padding:'10px 16px',fontFamily:'monospace',color:pc(v.p/v.n)}}>${v.p/v.n>=0?'+':''}${fd(v.p/v.n)}</td>
+              <td style=${{padding:'10px 16px',fontFamily:'monospace',fontWeight:700,color:pc(v.p)}}>${v.p>=0?'+':''}${fd(v.p)}</td>
+            </tr>`;
+          })}
+          </tbody>
+        </table>
+      </${Card}>
+    </div>`;
+  }
+
+  // ── Asset-Typ sub-view ──
+  function AssetView(){
+    const assets={};
+    closed.forEach(t=>{
+      const key=t.type||t.asset||'Unbekannt';
+      const p=pnl(t);if(p===null)return;
+      if(!assets[key]){assets[key]={p:0,n:0,w:0};}
+      assets[key].p+=p;assets[key].n++;
+      if(p>0)assets[key].w++;
+    });
+    const rows=Object.entries(assets).sort((a,b)=>b[1].p-a[1].p);
+    const assetColors={'Stock':C.accent,'Option':'#a78bfa','Future':'#fb923c','Crypto':'#34d399'};
+    return html`<div style=${{display:'flex',flexDirection:'column',gap:16}}>
+      <div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:12}}>
+        ${rows.map(([k,v])=>html`<${Card} key=${k} style=${{padding:'16px 18px',borderLeft:`3px solid ${assetColors[k]||C.accent}`}}>
+          <div style=${{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:6}}>${k.toUpperCase()}</div>
+          <div style=${{fontSize:22,fontWeight:800,color:pc(v.p)}}>${v.p>=0?'+':''}${fd(v.p)}</div>
+          <div style=${{fontSize:12,color:C.muted,marginTop:4}}>${v.n} Trades · ${(v.w/v.n*100).toFixed(0)}% Win</div>
+        </${Card}>`)}
+      </div>
+      <${Card} style=${{padding:0}}>
+        <table style=${{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+          <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>
+            ${['Asset','Trades','Win Rate','Avg P&L','Gesamt P&L'].map(h=>html`<th key=${h} style=${{padding:'10px 16px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>${h}</th>`)}
+          </tr></thead>
+          <tbody>${rows.map(([k,v])=>html`<tr key=${k} class="hr" style=${{borderBottom:`1px solid ${C.border}20`}}>
+            <td style=${{padding:'10px 16px'}}><span style=${{background:(assetColors[k]||C.accent)+'22',color:assetColors[k]||C.accent,borderRadius:6,padding:'3px 10px',fontWeight:700,fontSize:12}}>${k}</span></td>
+            <td style=${{padding:'10px 16px'}}>${v.n}</td>
+            <td style=${{padding:'10px 16px',fontWeight:700,color:v.w/v.n>=0.5?C.green:C.red}}>${(v.w/v.n*100).toFixed(1)}%</td>
+            <td style=${{padding:'10px 16px',fontFamily:'monospace',color:pc(v.p/v.n)}}>${v.p/v.n>=0?'+':''}${fd(v.p/v.n)}</td>
+            <td style=${{padding:'10px 16px',fontFamily:'monospace',fontWeight:700,color:pc(v.p)}}>${v.p>=0?'+':''}${fd(v.p)}</td>
+          </tr>`)}
+          </tbody>
+        </table>
+      </${Card}>
+    </div>`;
+  }
+
+  const views={overview:Overview,calendar:CalView,time:TimeView,session:SessionView,strategy:StrategyView,symbol:SymbolView,asset:AssetView,wl:WLView,tags:TagsView};
+  const View=views[tab]||Overview;
+
+  return html`<div style=${{display:'flex',flexDirection:'column',gap:16}}>
+    <div style=${{fontSize:18,fontWeight:700}}>Reports</div>
+    <div style=${{display:'flex',gap:6,flexWrap:'wrap'}}>
+      ${tabs.map(t=>html`<button key=${t.k} onClick=${()=>setTab(t.k)} style=${{background:tab===t.k?C.accent:'transparent',color:tab===t.k?'#000':C.muted,border:`1px solid ${tab===t.k?C.accent:C.border}`,borderRadius:8,padding:'7px 16px',fontWeight:600,fontSize:13,cursor:'pointer'}}>${t.l}</button>`)}
+    </div>
+    <${View}/>
+  </div>`;
+}
+
+// ─── PLAYBOOK ──────────────────────────────────────────────────────────────
+function Playbook({plays,setPlays}){
+  const [sel,setSel]=React.useState(plays.length?plays[0].id:null);
+  const [edit,setEdit]=React.useState(false);
+  const [form,setForm]=React.useState({});
+
+  const cur=plays.find(p=>p.id===sel)||null;
+
+  function newPlay(){
+    const p={id:Date.now(),name:'Neue Strategie',description:'',rules:'',notes:''};
+    setPlays(ps=>[...ps,p]);setSel(p.id);setForm(p);setEdit(true);
+  }
+  function savePlay(){
+    setPlays(ps=>ps.map(p=>p.id===sel?{...p,...form}:p));setEdit(false);
+  }
+  function delPlay(){
+    if(!confirm('Strategie löschen?'))return;
+    setPlays(ps=>{const n=ps.filter(p=>p.id!==sel);setSel(n.length?n[0].id:null);return n;});
+    setEdit(false);
+  }
+
+  return html`<div style=${{display:'flex',gap:16,height:'calc(100vh - 140px)',minHeight:400}}>
+    <div style=${{width:200,flexShrink:0,display:'flex',flexDirection:'column',gap:8}}>
+      <button onClick=${newPlay} style=${{background:C.accent,color:'#000',border:'none',borderRadius:8,padding:'9px 14px',fontWeight:700,cursor:'pointer',fontSize:13}}>+ Strategie</button>
+      <div style=${{display:'flex',flexDirection:'column',gap:4,overflowY:'auto'}}>
+        ${plays.map(p=>html`<button key=${p.id} onClick=${()=>{setSel(p.id);setEdit(false);setForm(p);}} style=${{background:sel===p.id?C.card2:'transparent',border:`1px solid ${sel===p.id?C.border:'transparent'}`,borderRadius:8,padding:'10px 12px',textAlign:'left',color:sel===p.id?C.text:C.muted,cursor:'pointer',fontWeight:sel===p.id?600:400,fontSize:13}}>${p.name}</button>`)}
+      </div>
+    </div>
+    <div style=${{flex:1,overflow:'auto'}}>
+      ${!cur?html`<${Card} style=${{padding:40,textAlign:'center',color:C.muted}}>Keine Strategie ausgewählt.</${Card}>`:
+      edit?html`<${Card} style=${{padding:22,display:'flex',flexDirection:'column',gap:14}}>
+        <div style=${{fontSize:16,fontWeight:700}}>Strategie bearbeiten</div>
+        ${[['name','Name'],['description','Beschreibung'],['rules','Regeln'],['notes','Notizen']].map(([k,l])=>html`<div key=${k}>
+          <label style=${{fontSize:11,fontWeight:700,color:C.muted,display:'block',marginBottom:5}}>${l}</label>
+          ${k==='name'?
+            html`<input value=${form[k]||''} onInput=${e=>setForm(f=>({...f,[k]:e.target.value}))} style=${{width:'100%',background:'var(--inp-bg)',border:'1px solid var(--inp-border)',borderRadius:7,padding:'9px 12px',color:C.text,fontSize:14,boxSizing:'border-box'}}/>`:
+            html`<textarea rows=${k==='name'?1:4} value=${form[k]||''} onInput=${e=>setForm(f=>({...f,[k]:e.target.value}))} style=${{width:'100%',background:'var(--inp-bg)',border:'1px solid var(--inp-border)',borderRadius:7,padding:'9px 12px',color:C.text,fontSize:13,resize:'vertical',fontFamily:'inherit',boxSizing:'border-box'}}/>`}
+        </div>`)}
+        <div style=${{display:'flex',gap:10}}>
+          <button onClick=${savePlay} style=${{background:C.accent,color:'#000',border:'none',borderRadius:8,padding:'9px 20px',fontWeight:700,cursor:'pointer'}}>Speichern</button>
+          <button onClick=${()=>setEdit(false)} style=${{background:'transparent',border:`1px solid ${C.border}`,borderRadius:8,padding:'9px 20px',color:C.muted,cursor:'pointer'}}>Abbrechen</button>
+          <button onClick=${delPlay} style=${{marginLeft:'auto',background:C.red+'22',border:`1px solid ${C.red}`,borderRadius:8,padding:'9px 20px',color:C.red,cursor:'pointer',fontWeight:600}}>Löschen</button>
+        </div>
+      </${Card}>`:
+      html`<${Card} style=${{padding:22,display:'flex',flexDirection:'column',gap:14}}>
+        <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div style=${{fontSize:18,fontWeight:700}}>${cur.name}</div>
+          <button onClick=${()=>{setForm(cur);setEdit(true);}} style=${{background:'transparent',border:`1px solid ${C.border}`,borderRadius:8,padding:'7px 16px',color:C.muted,cursor:'pointer',fontSize:13}}>✎ Bearbeiten</button>
+        </div>
+        ${cur.description?html`<div><div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:6}}>BESCHREIBUNG</div><div style=${{fontSize:14,lineHeight:1.6}}>${cur.description}</div></div>`:''}
+        ${cur.rules?html`<div><div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:6}}>REGELN</div><div style=${{fontSize:13,lineHeight:1.7,whiteSpace:'pre-wrap',color:C.muted}}>${cur.rules}</div></div>`:''}
+        ${cur.notes?html`<div><div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:6}}>NOTIZEN</div><div style=${{fontSize:13,lineHeight:1.7,whiteSpace:'pre-wrap',color:C.muted}}>${cur.notes}</div></div>`:''}
+      </${Card}>`}
+    </div>
+  </div>`;
+}
+
+// ─── NOTEBOOK ──────────────────────────────────────────────────────────────
+function Notebook({notes,setNotes}){
+  const [sel,setSel]=React.useState(null);
+  const [form,setForm]=React.useState({title:'',body:''});
+
+  function newNote(){
+    const n={id:Date.now(),title:'Neue Notiz',body:'',date:new Date().toISOString().slice(0,10)};
+    setNotes(ns=>[n,...ns]);setSel(n.id);setForm({title:n.title,body:n.body});
+  }
+  function save(){
+    setNotes(ns=>ns.map(n=>n.id===sel?{...n,...form,date:n.date}:n));
+  }
+  function del(){
+    if(!confirm('Notiz löschen?'))return;
+    setNotes(ns=>{const r=ns.filter(n=>n.id!==sel);setSel(r.length?r[0].id:null);return r;});
+  }
+  const cur=notes.find(n=>n.id===sel)||null;
+
+  // auto-save on form change
+  React.useEffect(()=>{
+    if(sel&&cur) save();
+  },[form]);
+
+  return html`<div style=${{display:'flex',gap:16,height:'calc(100vh - 140px)',minHeight:400}}>
+    <div style=${{width:220,flexShrink:0,display:'flex',flexDirection:'column',gap:8}}>
+      <button onClick=${newNote} style=${{background:C.accent,color:'#000',border:'none',borderRadius:8,padding:'9px 14px',fontWeight:700,cursor:'pointer',fontSize:13}}>+ Notiz</button>
+      <div style=${{display:'flex',flexDirection:'column',gap:4,overflowY:'auto'}}>
+        ${notes.map(n=>html`<button key=${n.id} onClick=${()=>{setSel(n.id);setForm({title:n.title,body:n.body});}} style=${{background:sel===n.id?C.card2:'transparent',border:`1px solid ${sel===n.id?C.border:'transparent'}`,borderRadius:8,padding:'10px 12px',textAlign:'left',cursor:'pointer'}}>
+          <div style=${{fontWeight:600,fontSize:13,color:sel===n.id?C.text:C.muted,marginBottom:3}}>${n.title}</div>
+          <div style=${{fontSize:10,color:C.muted}}>${n.date}</div>
+        </button>`)}
+      </div>
+    </div>
+    <div style=${{flex:1,display:'flex',flexDirection:'column',gap:12}}>
+      ${!cur?html`<${Card} style=${{padding:40,textAlign:'center',color:C.muted}}>Notiz auswählen oder neue erstellen.</${Card}>`:
+      html`<${Card} style=${{padding:18,flex:1,display:'flex',flexDirection:'column',gap:12}}>
+        <div style=${{display:'flex',alignItems:'center',gap:12}}>
+          <input value=${form.title} onInput=${e=>setForm(f=>({...f,title:e.target.value}))} style=${{flex:1,background:'transparent',border:'none',borderBottom:`2px solid ${C.border}`,color:C.text,fontSize:18,fontWeight:700,padding:'4px 0',outline:'none'}}/>
+          <button onClick=${del} style=${{background:C.red+'22',border:`1px solid ${C.red}`,borderRadius:7,padding:'6px 14px',color:C.red,cursor:'pointer',fontSize:12,fontWeight:600}}>Löschen</button>
+        </div>
+        <textarea value=${form.body} onInput=${e=>setForm(f=>({...f,body:e.target.value}))} placeholder="Notiz schreiben…" style=${{flex:1,background:'var(--inp-bg)',border:'1px solid var(--inp-border)',borderRadius:8,padding:'14px 16px',color:C.text,fontSize:14,lineHeight:1.7,resize:'none',fontFamily:'inherit',outline:'none'}}/>
+        <div style=${{fontSize:11,color:C.muted,textAlign:'right'}}>Auto-gespeichert · ${cur.date}</div>
+      </${Card}>`}
+    </div>
+  </div>`;
+}
+
+// ─── IMPORT VIEW ───────────────────────────────────────────────────────────
+function parseCSVLine(line){
+  const res=[];let cur='',inQ=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(c==='"'){inQ=!inQ;}
+    else if(c===','&&!inQ){res.push(cur);cur='';}
+    else{cur+=c;}
+  }
+  res.push(cur);return res;
+}
+
+function detectAssetType(symbol,name){
+  const s=symbol.toUpperCase(),n=(name||'').toLowerCase();
+  if(['BTC','ETH','LTC','XRP','ADA','SOL','DOGE'].some(c=>s.includes(c)))return'Crypto';
+  if(s.includes('/')&&!s.includes('USD'+'T'))return'Forex';
+  if(['GOLD','SILVER','OIL','GAS','PLATINUM'].some(c=>n.includes(c.toLowerCase())))return'CFD';
+  if(['US100','US500','DE40','UK100','JP225','NDAQ','NAS100'].includes(s))return'CFD';
+  return'Stock';
+}
+
+function parseFundsHistory(csv,existingIds){
+  const lines=csv.trim().split('\n').filter(Boolean);
+  const hdr=parseCSVLine(lines[0]).map(h=>h.trim());
+  const idx={};hdr.forEach((h,i)=>idx[h]=i);
+  if(idx['Amount']===undefined||idx['Instrument Symbol']===undefined)return null;
+  const trades=[];const skipped={dup:0,swap:0};
+  lines.slice(1).forEach(line=>{
+    const v=parseCSVLine(line);
+    const get=k=>v[idx[k]]||'';
+    if(get('Type')!=='TRADE'){skipped.swap++;return;}
+    if(get('Status')!=='PROCESSED')return;
+    const amount=parseFloat(get('Amount'));
+    if(isNaN(amount))return;
+    const brokerTradeId=get('Trade Id');
+    const rowId=get('Id')||brokerTradeId;
+    if(existingIds&&existingIds.has(rowId)){skipped.dup++;return;}
+    const dt=get('Modified');
+    const date=dt.slice(0,10);
+    const time=dt.length>=16?dt.slice(11,16):'';
+    const symbol=(get('Instrument Symbol')||'').toUpperCase().replace('/','');
+    const name=get('Instrument Name');
+    const type=detectAssetType(get('Instrument Symbol'),name);
+    trades.push({
+      id:rowId||String(Date.now()+Math.random()),
+      brokerTradeId,date,time,symbol,type,
+      side:amount>=0?'Long':'Short',
+      entry:0,exit:amount,qty:1,fees:0,
+      pnlOverride:amount,
+      notes:name+(amount===0?' (Keine Preisänderung)':''),
+      setup:'',session:'',rating:0,reviewed:false,tags:{}
+    });
+  });
+  return{trades,skipped};
+}
+
+function parseGenericCSV(csv){
+  const lines=csv.trim().split('\n').filter(Boolean);
+  const hdr=parseCSVLine(lines[0]).map(h=>h.trim().toLowerCase());
+  const need=['date','symbol','side','entry','qty'];
+  const miss=need.filter(k=>!hdr.includes(k));
+  if(miss.length)return{error:'Fehlende Spalten: '+miss.join(', ')};
+  const trades=lines.slice(1).map((line,i)=>{
+    const vals=parseCSVLine(line);
+    const obj={};hdr.forEach((h,j)=>obj[h]=(vals[j]||'').trim());
+    return{
+      id:String(Date.now()+i+Math.random()),
+      date:obj.date,time:obj.time||'',
+      symbol:(obj.symbol||'').toUpperCase(),
+      type:obj.type||obj.asset||'Stock',
+      side:obj.side||'Long',
+      entry:parseFloat(obj.entry)||0,
+      exit:obj.exit?parseFloat(obj.exit):null,
+      qty:parseFloat(obj.qty)||1,
+      fees:parseFloat(obj.fees)||0,
+      stopLoss:obj.stoploss?parseFloat(obj.stoploss):null,
+      profitTarget:obj.profittarget?parseFloat(obj.profittarget):null,
+      notes:obj.notes||'',setup:'',session:'',rating:0,reviewed:false,tags:{}
+    };
+  });
+  return{trades};
+}
+
+function ImportView({trades,setTrades}){
+  const [csv,setCsv]=React.useState('');
+  const [msg,setMsg]=React.useState('');
+  const [msgType,setMsgType]=React.useState('info');
+  const [preview,setPreview]=React.useState([]);
+  const [format,setFormat]=React.useState('');
+  const fileRef=React.useRef(null);
+
+  function loadFile(e){
+    const file=e.target.files[0];if(!file)return;
+    const r=new FileReader();
+    r.onload=ev=>{setCsv(ev.target.result);setPreview([]);setMsg('Datei geladen: '+file.name);setMsgType('info');};
+    r.readAsText(file);
+  }
+
+  function analyse(){
+    if(!csv.trim()){setMsg('Kein CSV-Inhalt vorhanden.');setMsgType('err');return;}
+    const firstLine=csv.trim().split('\n')[0];
+    // Auto-detect: Funds History format
+    if(firstLine.includes('Balance')&&firstLine.includes('Instrument Symbol')){
+      const existingIds=new Set(trades.map(t=>t.id));
+      const res=parseFundsHistory(csv,existingIds);
+      if(!res){setMsg('Format konnte nicht gelesen werden.');setMsgType('err');return;}
+      setFormat('funds');
+      setPreview(res.trades);
+      const skip=res.skipped;
+      setMsg(`✓ Broker-Export erkannt. ${res.trades.length} neue Trades gefunden.`+(skip.dup?` ${skip.dup} bereits vorhanden (übersprungen).`:'')+(skip.swap?` ${skip.swap} Swap-Gebühren ignoriert.`:''));
+      setMsgType('ok');
+    } else {
+      const res=parseGenericCSV(csv);
+      if(res.error){setMsg(res.error);setMsgType('err');return;}
+      setFormat('generic');
+      setPreview(res.trades);
+      setMsg(`${res.trades.length} Trades erkannt. Format: Standard-CSV.`);
+      setMsgType('ok');
+    }
+  }
+
+  function doImport(){
+    if(!preview.length)return;
+    setTrades(ts=>[...ts,...preview]);
+    const n=preview.length;
+    setCsv('');setPreview([]);setFormat('');
+    setMsg(`✓ ${n} Trades erfolgreich importiert!`);setMsgType('ok');
+    if(fileRef.current)fileRef.current.value='';
+  }
+
+  const tmpl='date,symbol,side,type,entry,exit,qty,fees,stopLoss,profitTarget,notes,time\n2024-01-15,AAPL,Long,Stock,180.50,185.20,10,2.50,178.00,190.00,Breakout,09:45';
+  const msgColor=msgType==='ok'?C.green:msgType==='err'?C.red:C.accent;
+
+  return html`<div style=${{display:'flex',flexDirection:'column',gap:16}}>
+    <div style=${{fontSize:18,fontWeight:700}}>Import</div>
+
+    <${Card} style=${{padding:20,display:'flex',flexDirection:'column',gap:16}}>
+      <div style=${{display:'flex',gap:12,flexWrap:'wrap',alignItems:'flex-start'}}>
+        <div style=${{flex:1,minWidth:240}}>
+          <div style=${{fontSize:12,fontWeight:700,color:C.muted,marginBottom:8,letterSpacing:'.06em'}}>DATEI AUSWÄHLEN</div>
+          <label style=${{display:'inline-flex',alignItems:'center',gap:8,background:'var(--inp-bg)',border:'1px solid var(--inp-border)',borderRadius:9,padding:'9px 16px',cursor:'pointer',fontSize:13,color:C.text,fontWeight:600}}>
+            📂 CSV öffnen
+            <input ref=${fileRef} type="file" accept=".csv,.txt" onChange=${loadFile} style=${{display:'none'}}/>
+          </label>
+        </div>
+        <${Card} style=${{flex:1,minWidth:240,padding:'14px 16px',background:C.card2,border:`1px dashed ${C.border}`}}>
+          <div style=${{fontSize:11,fontWeight:700,color:C.accent,marginBottom:6}}>UNTERSTÜTZTE FORMATE</div>
+          <div style=${{fontSize:12,color:C.muted,lineHeight:1.7}}>
+            ✓ <b style=${{color:C.text}}>Broker-Export</b> (funds_history…csv)<br/>
+            ✓ <b style=${{color:C.text}}>Standard-CSV</b> mit Header-Zeile<br/>
+            Duplikate werden automatisch erkannt.
+          </div>
+        </${Card}>
+      </div>
+
+      <div>
+        <div style=${{fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,letterSpacing:'.06em'}}>ODER CSV DIREKT EINFÜGEN</div>
+        <textarea rows="6" value=${csv} onInput=${e=>{setCsv(e.target.value);setPreview([]);setMsg('');}}
+          placeholder=${'CSV hier einfügen…\n\n'+tmpl}
+          style=${{width:'100%',background:'var(--inp-bg)',border:'1px solid var(--inp-border)',borderRadius:8,padding:'12px 14px',color:C.text,fontSize:11,lineHeight:1.6,resize:'vertical',fontFamily:'monospace',boxSizing:'border-box'}}/>
+      </div>
+
+      <div style=${{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+        <button onClick=${analyse} style=${{background:C.accent,color:'#000',border:'none',borderRadius:8,padding:'9px 22px',fontWeight:700,cursor:'pointer',fontSize:13}}>
+          🔍 Analysieren
+        </button>
+        ${preview.length?html`<button onClick=${doImport} style=${{background:C.green,color:'#000',border:'none',borderRadius:8,padding:'9px 22px',fontWeight:700,cursor:'pointer',fontSize:13}}>
+          ✓ ${preview.length} Trades importieren
+        </button>`:''}
+        <button onClick=${()=>{setCsv(tmpl);setPreview([]);setMsg('');setMsgType('info');}} style=${{background:'transparent',border:`1px solid ${C.border}`,borderRadius:8,padding:'9px 16px',color:C.muted,cursor:'pointer',fontSize:12}}>Vorlage laden</button>
+      </div>
+
+      ${msg?html`<div style=${{padding:'10px 14px',background:msgColor+'18',border:`1px solid ${msgColor}44`,borderRadius:8,fontSize:13,color:msgColor,fontWeight:500}}>${msg}</div>`:''}
+    </${Card}>
+
+    ${preview.length?html`<${Card} style=${{padding:0}}>
+      <div style=${{padding:'12px 16px',borderBottom:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span style=${{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>VORSCHAU — ${preview.length} TRADES</span>
+        <span style=${{fontSize:11,color:C.muted}}>${format==='funds'?'Broker-Export (P&L direkt)':'Standard-CSV'}</span>
+      </div>
+      <div style=${{overflowX:'auto'}}><table style=${{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+        <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>
+          ${(format==='funds'?['Datum','Zeit','Symbol','Typ','P&L','Instrument']:['Datum','Symbol','Seite','Typ','Einstieg','Ausstieg','Menge']).map(h=>html`<th key=${h} style=${{padding:'8px 14px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted}}>${h}</th>`)}
+        </tr></thead>
+        <tbody>${preview.slice(0,15).map((t,i)=>format==='funds'?html`<tr key=${i} style=${{borderBottom:`1px solid ${C.border}20`}}>
+          <td style=${{padding:'8px 14px',color:C.muted}}>${t.date}</td>
+          <td style=${{padding:'8px 14px',color:C.muted}}>${t.time}</td>
+          <td style=${{padding:'8px 14px',fontFamily:'monospace',fontWeight:700}}>${t.symbol}</td>
+          <td style=${{padding:'8px 14px',color:C.muted,fontSize:11}}>${t.type}</td>
+          <td style=${{padding:'8px 14px',fontFamily:'monospace',fontWeight:700,color:pc(t.pnlOverride)}}>${t.pnlOverride>=0?'+':''}${t.pnlOverride.toFixed(2)} EUR</td>
+          <td style=${{padding:'8px 14px',color:C.muted,fontSize:11}}>${t.notes}</td>
+        </tr>`:html`<tr key=${i} style=${{borderBottom:`1px solid ${C.border}20`}}>
+          <td style=${{padding:'8px 14px',color:C.muted}}>${t.date}</td>
+          <td style=${{padding:'8px 14px',fontFamily:'monospace',fontWeight:700}}>${t.symbol}</td>
+          <td style=${{padding:'8px 14px',color:t.side==='Long'?C.green:C.red,fontWeight:600}}>${t.side}</td>
+          <td style=${{padding:'8px 14px',color:C.muted}}>${t.type}</td>
+          <td style=${{padding:'8px 14px',fontFamily:'monospace'}}>${t.entry.toFixed(2)}</td>
+          <td style=${{padding:'8px 14px',fontFamily:'monospace'}}>${t.exit?t.exit.toFixed(2):'–'}</td>
+          <td style=${{padding:'8px 14px'}}>${t.qty}</td>
+        </tr>`)}
+        </tbody>
+      </table></div>
+      ${preview.length>15?html`<div style=${{padding:'8px 16px',fontSize:11,color:C.muted,borderTop:`1px solid ${C.border}`}}>…und ${preview.length-15} weitere</div>`:''}
+    </${Card}>`:''}
+  </div>`;
+}
+
+// ─── SIDEBAR ───────────────────────────────────────────────────────────────
+function Sidebar({page,setPage,trades,theme,toggleTheme}){
+  const [open,setOpen]=React.useState(true);
+  const openPos=trades.filter(t=>!t.exit).length;
+  const isDark=theme==='dark';
+  const nav=[
+    {k:'dashboard',icon:'▦',label:'Dashboard'},
+    {k:'journal',icon:'≡',label:'Journal'},
+    {k:'reports',icon:'↗',label:'Reports'},
+    {k:'playbook',icon:'◈',label:'Playbook'},
+    {k:'notebook',icon:'✎',label:'Notebook'},
+    {k:'import',icon:'⤒',label:'Import'},
+  ];
+  const sb={background:C.sidebar,borderRight:`1px solid ${C.sidebarBorder}`,display:'flex',flexDirection:'column',height:'100vh',overflowY:'auto',overflowX:'hidden',transition:'width .22s cubic-bezier(.4,0,.2,1)',width:open?220:58,flexShrink:0};
+  return html`<div style=${sb}>
+    <!-- Logo -->
+    <div style=${{padding:'0 12px',height:56,display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:`1px solid ${C.sidebarBorder}`,flexShrink:0}}>
+      ${open?html`<div style=${{display:'flex',alignItems:'center',gap:8}}>
+        <div style=${{width:26,height:26,borderRadius:7,background:C.accent,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:900,color:'#fff',flexShrink:0}}>T</div>
+        <span style=${{fontWeight:800,fontSize:14,color:C.text,letterSpacing:'-.01em'}}>TradeTrack</span>
+      </div>`:''}
+      <button onClick=${()=>setOpen(o=>!o)} style=${{background:'transparent',border:'none',color:C.muted,cursor:'pointer',padding:6,borderRadius:6,lineHeight:1,fontSize:15,flexShrink:0}} title=${open?'Zuklappen':'Aufklappen'}>${open?'‹':'›'}</button>
+    </div>
+
+    <!-- Nav -->
+    <div style=${{flex:1,padding:'10px 8px',display:'flex',flexDirection:'column',gap:2}}>
+      ${nav.map(n=>{
+        const active=page===n.k;
+        return html`<button key=${n.k} onClick=${()=>setPage(n.k)} title=${n.label}
+          style=${{display:'flex',alignItems:'center',gap:10,
+            background:active?C.accent+'1A':'transparent',
+            color:active?C.accent:C.muted,
+            border:'none',borderRadius:9,
+            padding:open?'9px 12px':'9px 0',
+            justifyContent:open?'flex-start':'center',
+            fontWeight:active?700:500,fontSize:13,
+            textAlign:'left',transition:'all .15s',
+            whiteSpace:'nowrap',width:'100%'}}>
+          <span style=${{fontSize:15,flexShrink:0,width:20,textAlign:'center',fontStyle:'normal'}}>${n.icon}</span>
+          ${open?html`<span style=${{flex:1}}>${n.label}</span>`:''}
+          ${n.k==='journal'&&openPos>0&&open?html`<span style=${{background:C.accent,color:'#fff',borderRadius:10,padding:'1px 7px',fontSize:10,fontWeight:700,marginLeft:'auto'}}>${openPos}</span>`:''}
+          ${active&&!open?html`<span style=${{position:'absolute',left:48,width:3,height:18,background:C.accent,borderRadius:2}}></span>`:''}
+        </button>`;
+      })}
+    </div>
+
+    <!-- Footer: theme toggle + stats -->
+    <div style=${{padding:'10px 8px',borderTop:`1px solid ${C.sidebarBorder}`,display:'flex',flexDirection:'column',gap:6,flexShrink:0}}>
+      <button onClick=${toggleTheme}
+        style=${{display:'flex',alignItems:'center',gap:10,background:'transparent',border:`1px solid ${C.border}`,borderRadius:9,
+          padding:open?'8px 12px':'8px 0',justifyContent:open?'flex-start':'center',
+          color:C.muted,fontSize:12,fontWeight:600,width:'100%',transition:'all .15s'}}
+        title=${isDark?'Hell-Modus':'Dunkel-Modus'}>
+        <span style=${{fontSize:14,width:20,textAlign:'center'}}>${isDark?'☀':'🌙'}</span>
+        ${open?html`<span>${isDark?'Hell-Modus':'Dunkel-Modus'}</span>`:''}
+      </button>
+      ${open?html`<div style=${{fontSize:10,color:C.muted,padding:'4px 4px 0'}}>${trades.length} Trades · ${openPos} offen</div>`:''}
+    </div>
+  </div>`;
+}
+
+// ─── TRADE MODAL WRAPPER ───────────────────────────────────────────────────
+function ModalWrap({trade,plays,onClose,onSave,onDelete}){
+  return html`<${TradeModal} initial=${trade||null} playbook=${plays||[]} onClose=${onClose} onSave=${onSave} onDelete=${onDelete}/>`;
+}
+
+// ─── APP ROOT ──────────────────────────────────────────────────────────────
+// ─── CAPITAL MODAL ─────────────────────────────────────────────────────────
+function CapitalModal({capital,onSave,onClose}){
+  const [tab,setTab]=React.useState('deposit');
+  const [amount,setAmount]=React.useState('');
+  const [note,setNote]=React.useState('');
+  const [date,setDate]=React.useState(new Date().toISOString().slice(0,10));
+  const [editInitial,setEditInitial]=React.useState(false);
+  const [newInitial,setNewInitial]=React.useState(String(capital.initial));
+
+  function addEvent(){
+    const a=parseFloat(amount.replace(',','.'));
+    if(!a||a<=0){alert('Ungültiger Betrag');return;}
+    const ev={id:String(Date.now()),date,amount:a,type:tab,note};
+    onSave({...capital,events:[...capital.events,ev]});
+    setAmount('');setNote('');
+  }
+  function saveInitial(){
+    const v=parseFloat(newInitial.replace(',','.'));
+    if(!v||v<0){alert('Ungültiger Betrag');return;}
+    onSave({...capital,initial:v});
+    setEditInitial(false);
+  }
+  function deleteEvent(id){
+    if(!confirm('Eintrag löschen?'))return;
+    onSave({...capital,events:capital.events.filter(e=>e.id!==id)});
+  }
+
+  const inp={background:'var(--inp-bg)',border:'1px solid var(--inp-border)',borderRadius:9,padding:'8px 12px',color:C.text,fontSize:13,width:'100%'};
+  return html`<div style=${{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,.8)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}} onClick=${onClose}>
+    <div onClick=${e=>e.stopPropagation()} style=${{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,width:'100%',maxWidth:480,maxHeight:'90vh',overflowY:'auto'}}>
+      <div style=${{padding:'16px 20px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <span style=${{fontWeight:700,fontSize:15}}>💰 Kapital verwalten</span>
+        <button onClick=${onClose} style=${{background:'none',border:'none',color:C.muted,fontSize:20,cursor:'pointer',lineHeight:1}}>×</button>
+      </div>
+      <div style=${{padding:20,display:'flex',flexDirection:'column',gap:18}}>
+
+        <!-- Startkapital -->
+        <div style=${{background:C.card2,borderRadius:10,padding:'14px 16px'}}>
+          <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:8}}>STARTKAPITAL</div>
+          ${editInitial?html`<div style=${{display:'flex',gap:8}}>
+            <input type="number" step="0.01" value=${newInitial} onInput=${e=>setNewInitial(e.target.value)} style=${{...inp,flex:1}}/>
+            <button onClick=${saveInitial} style=${{background:C.accent,color:'#000',border:'none',borderRadius:8,padding:'8px 16px',fontWeight:700,cursor:'pointer'}}>OK</button>
+            <button onClick=${()=>setEditInitial(false)} style=${{background:'transparent',border:`1px solid ${C.border}`,borderRadius:8,padding:'8px 14px',color:C.muted,cursor:'pointer'}}>✕</button>
+          </div>`:html`<div style=${{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span style=${{fontSize:20,fontWeight:800}}>${capital.initial.toFixed(2)} EUR</span>
+            <button onClick=${()=>setEditInitial(true)} style=${{background:'transparent',border:`1px solid ${C.border}`,borderRadius:7,padding:'5px 12px',color:C.muted,cursor:'pointer',fontSize:12}}>✎ Anpassen</button>
+          </div>`}
+        </div>
+
+        <!-- Neue Transaktion -->
+        <div>
+          <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:10}}>NEUE TRANSAKTION</div>
+          <div style=${{display:'flex',gap:6,marginBottom:12}}>
+            ${[['deposit','Einzahlung',C.green],['withdrawal','Auszahlung',C.red]].map(([k,l,col])=>html`
+              <button key=${k} onClick=${()=>setTab(k)} style=${{flex:1,padding:'8px',borderRadius:9,fontWeight:700,fontSize:13,border:tab===k?'none':`1px solid ${C.border}`,background:tab===k?col+'33':'transparent',color:tab===k?col:C.muted,cursor:'pointer'}}>${l}</button>`)}
+          </div>
+          <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+            <div><label style=${{fontSize:10,fontWeight:700,color:C.muted,display:'block',marginBottom:4}}>BETRAG (EUR)</label>
+              <input type="number" step="0.01" placeholder="0.00" value=${amount} onInput=${e=>setAmount(e.target.value)} style=${inp}/>
+            </div>
+            <div><label style=${{fontSize:10,fontWeight:700,color:C.muted,display:'block',marginBottom:4}}>DATUM</label>
+              <input type="date" value=${date} onChange=${e=>setDate(e.target.value)} style=${inp}/>
+            </div>
+          </div>
+          <div style=${{marginBottom:10}}><label style=${{fontSize:10,fontWeight:700,color:C.muted,display:'block',marginBottom:4}}>NOTIZ (optional)</label>
+            <input placeholder="z.B. Monatsüberweisung" value=${note} onInput=${e=>setNote(e.target.value)} style=${inp}/>
+          </div>
+          <button onClick=${addEvent} style=${{width:'100%',background:tab==='deposit'?C.green:C.red,color:'#000',border:'none',borderRadius:9,padding:'10px',fontWeight:700,cursor:'pointer',fontSize:14}}>
+            ${tab==='deposit'?'+ Einzahlung erfassen':'− Auszahlung erfassen'}
+          </button>
+        </div>
+
+        <!-- Historie -->
+        ${capital.events.length?html`<div>
+          <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:8}}>VERLAUF</div>
+          <div style=${{display:'flex',flexDirection:'column',gap:6}}>
+            ${[...capital.events].sort((a,b)=>b.date.localeCompare(a.date)).map(e=>html`
+              <div key=${e.id} style=${{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',background:C.card2,borderRadius:8}}>
+                <span style=${{fontSize:18}}>${e.type==='deposit'?'⬆':'⬇'}</span>
+                <div style=${{flex:1}}>
+                  <div style=${{fontWeight:700,color:e.type==='deposit'?C.green:C.red,fontSize:14}}>${e.type==='deposit'?'+':'−'}${e.amount.toFixed(2)} EUR</div>
+                  <div style=${{fontSize:11,color:C.muted}}>${e.date}${e.note?' · '+e.note:''}</div>
+                </div>
+                <button onClick=${()=>deleteEvent(e.id)} style=${{background:'transparent',border:'none',color:C.muted,cursor:'pointer',fontSize:16,padding:4}}>×</button>
+              </div>`)}
+          </div>
+        </div>`:''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function App(){
+  const [trades,setTrades]=React.useState(()=>{
+    try{const s=localStorage.getItem('tt_trades');return s?JSON.parse(s):SD;}catch{return SD;}
+  });
+  const [plays,setPlays]=React.useState(()=>{
+    try{const s=localStorage.getItem('tt_plays');return s?JSON.parse(s):[SPB];}catch{return [SPB];}
+  });
+  const [notes,setNotes]=React.useState(()=>{
+    try{const s=localStorage.getItem('tt_notes');return s?JSON.parse(s):[];}catch{return [];}
+  });
+  const [capital,setCapital]=React.useState(()=>{
+    try{const s=localStorage.getItem('tt_capital');return s?JSON.parse(s):{initial:1000.21,events:[]};}catch{return{initial:1000.21,events:[]};}
+  });
+  const [theme,setTheme]=React.useState(()=>{try{return localStorage.getItem('tt_theme')||'dark';}catch{return'dark';}});
+  const [page,setPage]=React.useState('dashboard');
+  const [modal,setModal]=React.useState(null);
+  const [capModal,setCapModal]=React.useState(false);
+
+  function toggleTheme(){
+    const next=theme==='dark'?'light':'dark';
+    applyTheme(next);setTheme(next);
+  }
+
+  React.useEffect(()=>{try{localStorage.setItem('tt_trades',JSON.stringify(trades));}catch{}},[trades]);
+  React.useEffect(()=>{try{localStorage.setItem('tt_plays',JSON.stringify(plays));}catch{}},[plays]);
+  React.useEffect(()=>{try{localStorage.setItem('tt_notes',JSON.stringify(notes));}catch{}},[notes]);
+  React.useEffect(()=>{try{localStorage.setItem('tt_capital',JSON.stringify(capital));}catch{}},[capital]);
+
+  function saveTrade(t){
+    setTrades(ts=>{
+      const exists=ts.find(x=>x.id===t.id);
+      return exists?ts.map(x=>x.id===t.id?t:x):[...ts,{...t,id:Date.now()}];
+    });
+    setModal(null);
+  }
+  function delTrade(id){
+    setTrades(ts=>ts.filter(t=>t.id!==id));setModal(null);
+  }
+
+  const pages={
+    dashboard:html`<${Dashboard} trades=${trades} onEdit=${t=>setModal(t||'new')} capital=${capital} onCapital=${()=>setCapModal(true)}/>`,
+    journal:html`<${Journal} trades=${trades} setTrades=${setTrades} onEdit=${t=>setModal(t||'new')}/>`,
+    reports:html`<${Reports} trades=${trades} plays=${plays}/>`,
+    playbook:html`<${Playbook} plays=${plays} setPlays=${setPlays}/>`,
+    notebook:html`<${Notebook} notes=${notes} setNotes=${setNotes}/>`,
+    import:html`<${ImportView} trades=${trades} setTrades=${setTrades}/>`,
+  };
+
+  return html`<div key=${theme} style=${{display:'flex',minHeight:'100vh',background:C.bg,color:C.text,fontFamily:'-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif'}}>
+    <div style=${{position:'sticky',top:0,height:'100vh',flexShrink:0}}>
+      <${Sidebar} page=${page} setPage=${setPage} trades=${trades} theme=${theme} toggleTheme=${toggleTheme}/>
+    </div>
+    <main style=${{flex:1,padding:'28px 32px',minWidth:0,overflowX:'hidden'}}>
+      ${pages[page]||pages.dashboard}
+    </main>
+    ${capModal?html`<${CapitalModal} capital=${capital} onSave=${c=>{setCapital(c);}} onClose=${()=>setCapModal(false)}/>`:''}
+    ${modal?html`<${ModalWrap}
+      key=${modal==='new'?'new':(modal.id||'edit')}
+      trade=${modal==='new'?null:modal}
+      plays=${plays}
+      onClose=${()=>setModal(null)}
+      onSave=${saveTrade}
+      onDelete=${delTrade}
+    />`:''}
+  </div>`;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(html`<${App}/>`);
+</script>
+</body>
+</html>
