@@ -12,7 +12,7 @@
 html{height:100%}
 body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;overflow:auto;transition:background .2s,color .2s}
 body.dark{background:#0D1117;color:#E6EDF3;--hover:rgba(255,255,255,.04);--inp-bg:#1C2128;--inp-border:#30363D}
-body.light{background:#F5F7FA;color:#1F2328;--hover:rgba(0,0,0,.04);--inp-bg:#FFFFFF;--inp-border:#D0D7DE}
+body.light{background:#F0EBE3;color:#26201A;--hover:rgba(0,0,0,.04);--inp-bg:#FAF7F3;--inp-border:#C4B9AD}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:rgba(128,128,128,.3);border-radius:6px}
@@ -40,7 +40,7 @@ const {useState,useEffect,useMemo,useRef}=React;
 
 const THEMES={
   dark:{bg:'#0D1117',card:'#161B22',card2:'#1C2128',border:'#21262D',border2:'#30363D',accent:'#7C6FF7',green:'#3FB950',red:'#F85149',yellow:'#D29922',muted:'#8B949E',text:'#E6EDF3',text2:'#8B949E',sidebar:'#010409',sidebarBorder:'#21262D'},
-  light:{bg:'#F5F7FA',card:'#FFFFFF',card2:'#F0F2F5',border:'#E1E4E8',border2:'#D0D7DE',accent:'#6C5CE7',green:'#1A7F37',red:'#CF222E',yellow:'#9A6700',muted:'#57606A',text:'#1F2328',text2:'#57606A',sidebar:'#FFFFFF',sidebarBorder:'#E1E4E8'},
+  light:{bg:'#F0EBE3',card:'#FAF7F3',card2:'#E8E1D8',border:'#D4C9BE',border2:'#C4B9AD',accent:'#6C5CE7',green:'#1B7A3F',red:'#C62828',yellow:'#8A6000',muted:'#7A6E65',text:'#26201A',text2:'#7A6E65',sidebar:'#E8E1D8',sidebarBorder:'#D4C9BE'},
 };
 // C is a mutable object — applyTheme updates it in-place so all components
 // always read the current theme values on the next React render cycle.
@@ -66,7 +66,17 @@ function fd(n){if(n===null||n===undefined)return'–';const a=Math.abs(n),s=n<0?
 function fp(n){if(n===null||n===undefined)return'–';return(n>=0?'+':'')+n.toFixed(2)+'%';}
 function pc(n){return n===null?C.muted:n>=0?C.green:C.red;}
 function calcRMul(t){if(!t.stopLoss||!t.entry||!t.exit)return null;const risk=Math.abs(t.entry-t.stopLoss)*t.qty;if(risk<=0)return null;return(pnl(t)||0)/risk;}
-function calcMaxDD(trades){const s=[...trades].filter(t=>t.exit).sort((a,b)=>a.date.localeCompare(b.date));let peak=0,eq=0,maxAbs=0,maxPct=0;s.forEach(t=>{eq+=pnl(t)||0;if(eq>peak)peak=eq;const dd=peak-eq;if(dd>maxAbs){maxAbs=dd;maxPct=peak>0?dd/peak*100:0;}});return{abs:maxAbs,pct:maxPct};}
+function calcMaxDD(trades){
+  const s=[...trades].filter(t=>t.exit).sort((a,b)=>a.date.localeCompare(b.date));
+  let peak=0,eq=0,maxAbs=0,maxPct=0;
+  s.forEach(t=>{
+    eq+=pnl(t)||0;
+    if(eq>peak)peak=eq;
+    const dd=peak-eq;
+    if(dd>maxAbs){maxAbs=dd;maxPct=peak>0?dd/peak*100:maxAbs>0?100:0;}
+  });
+  return{abs:maxAbs,pct:maxPct};
+}
 function calcExpectancy(trades){const ps=trades.filter(t=>t.exit).map(pnl).filter(p=>p!==null);return ps.length?ps.reduce((a,b)=>a+b,0)/ps.length:0;}
 function calcDayWinPct(trades){const m={};trades.filter(t=>t.exit).forEach(t=>{m[t.date]=(m[t.date]||0)+(pnl(t)||0);});const d=Object.values(m);return d.length?d.filter(p=>p>0).length/d.length*100:0;}
 function calcStreak(trades){
@@ -79,21 +89,22 @@ function calcStreak(trades){
   for(let i=days.length-1;i>=0;i--){const p=days[i][1],d=p>0?1:p<0?-1:0;if(i===days.length-1){ds=d;ddir=d;}else if(d===0||d!==ddir)break;else ds+=ddir;}
   return{trade:ts,day:ds};
 }
-function calcZellaScore(trades){
-  const cl=trades.filter(t=>t.exit);const ps=cl.map(pnl).filter(p=>p!==null);if(ps.length<3)return null;
-  const ws=ps.filter(p=>p>0),ls=ps.filter(p=>p<0);
-  const gw=ws.reduce((a,b)=>a+b,0),gl=Math.abs(ls.reduce((a,b)=>a+b,0));
-  const pf=gl>0?gw/gl:gw>0?10:0;
-  const pfS=pf>=2.6?100:pf>=2.4?90:pf>=2.2?80:pf>=2?70:pf>=1.9?60:pf>=1.8?50:Math.max(0,pf/1.8*20);
-  const avgW=ws.length?gw/ws.length:0,avgL=ls.length?gl/ls.length:1;
-  const wlrS=avgW/avgL>=2.6?100:avgW/avgL>=2.4?90:avgW/avgL>=2.2?80:avgW/avgL>=2?70:avgW/avgL>=1.9?60:avgW/avgL>=1.8?50:Math.max(0,avgW/avgL/1.8*20);
-  const {pct:dd,abs:ddA}=calcMaxDD(trades);const ddS=Math.max(0,100-dd);
-  const wr=ws.length/ps.length*100;const wrS=Math.min(100,wr/60*100);
-  const tot=ps.reduce((a,b)=>a+b,0);const rf=ddA>0?tot/ddA:0;
-  const rfS=rf>=3.5?100:rf>=3?80:rf>=2.5?65:rf>=2?55:rf>=1.5?40:rf>=1?15:0;
-  const mean=tot/ps.length;const std=Math.sqrt(ps.reduce((a,b)=>a+(b-mean)**2,0)/ps.length);
-  const consS=tot>0?Math.max(0,100-std/Math.abs(tot)*100):0;
-  return Math.min(100,Math.max(0,Math.round(pfS*.25+wlrS*.20+ddS*.20+wrS*.15+rfS*.10+consS*.10)));
+function calcSharpe(trades){
+  const ps=trades.filter(t=>t.exit).map(pnl).filter(p=>p!==null);
+  if(ps.length<3)return null;
+  const mean=ps.reduce((a,b)=>a+b,0)/ps.length;
+  const std=Math.sqrt(ps.reduce((a,b)=>a+(b-mean)**2,0)/ps.length);
+  return std>0?+(mean/std).toFixed(2):null;
+}
+function calcConsecWL(trades){
+  const s=[...trades].filter(t=>t.exit).sort((a,b)=>a.date.localeCompare(b.date));
+  let maxW=0,maxL=0,curW=0,curL=0;
+  s.forEach(t=>{const p=pnl(t)||0;if(p>0){curW++;curL=0;maxW=Math.max(maxW,curW);}else if(p<0){curL++;curW=0;maxL=Math.max(maxL,curL);}else{curW=0;curL=0;}});
+  return{wins:maxW,losses:maxL};
+}
+function calcAvgRMul(trades){
+  const rs=trades.filter(t=>t.exit).map(calcRMul).filter(r=>r!==null&&isFinite(r));
+  return rs.length?+(rs.reduce((a,b)=>a+b,0)/rs.length).toFixed(2):null;
 }
 function calcTilt(trades){
   const s=[...trades].filter(t=>t.exit).sort((a,b)=>a.date.localeCompare(b.date));
@@ -119,10 +130,18 @@ const SD=[
   {id:'s14',date:'2026-04-05',time:'09:30',symbol:'AAPL',type:'Stock',side:'Long',entry:182,exit:null,qty:50,fees:1,stopLoss:178,profitTarget:192,notes:'Noch offen',setup:'Breakout',status:'open',rating:0,reviewed:false,tags:{mentalState:'Calm',marketCondition:'Trending',mistake:''}},
 ];
 const SPB=[
-  {id:'p1',name:'Breakout',timeframe:'Daily/1h',description:'Ausbruch aus Konsolidierung mit Volumen.',rules:'Konsolidierung mind. 5 Kerzen\nBreakout mit Volumen\nEinstieg beim Retest\nStop unter Breakout-Level\nZiel: 2x Risiko'},
-  {id:'p2',name:'Mean Reversion',timeframe:'15min',description:'Trades zurück zum gleitenden Durchschnitt.',rules:'RSI unter 30 oder über 70\n2 ATR vom 20er MA\nUmkehr-Kerze abwarten\nStop hinter Extrempunkt\nZiel: 20er MA'},
-  {id:'p3',name:'Trend Follow',timeframe:'4h/Daily',description:'Pullback-Einstiege in laufenden Trends.',rules:'Trend bestätigt (HH, HL)\nPullback auf Fibonacci\nMomentum-Rückkehr\nTrailing Stop 2x ATR'},
-  {id:'p4',name:'Support Bounce',timeframe:'1h',description:'Long-Trades an Support-Zonen.',rules:'Support 2x getestet\nVolumen nimmt ab\nUmkehrsignal im M15\nStop unter Support'},
+  {id:'p1',name:'5 min Open Range Retest',timeframe:'5min',description:'Die ersten 5 Minuten nach Marktöffnung bilden eine Range (High/Low). Beim ersten sauberen Retest dieser Range wird ein Einstieg gesucht.',rules:'Erste 5-Minuten-Kerze abwarten\nHigh und Low markieren\nBreakout über/unter die Range\nRetest der gebrochenen Seite abwarten\nEinstieg bei Bestätigungskerze\nStop hinter das Retest-Tief/Hoch\nZiel: 1,5–3x Risiko\nNur NY Open (09:30–10:00 ET)'},
+  {id:'p2',name:'Range',timeframe:'15min/1h',description:'Preis bewegt sich in einer klar definierten Seitwärtsrange. Trades werden an den Extremen der Range (Unterstützung / Widerstand) eingegangen.',rules:'Range klar definiert (mind. 3 Kontaktpunkte je Seite)\nEinstieg an der unteren Range-Kante (Long) oder oberen (Short)\nUmkehr-Kerze als Trigger\nStop außerhalb der Range (10–15 Pips Puffer)\nZiel: Gegenüberliegende Range-Kante\nBei Breakout Position schließen'},
+  {id:'p3',name:'Reversal',timeframe:'5min/15min',description:'Gegenläufiger Trade nach einem überdurchschnittlichen Impuls. Der Kurs hat sich zu weit vom Mittelwert entfernt und zeigt erste Umkehrsignale.',rules:'Starker Impuls (3+ ATR in kurzer Zeit)\nRSI über 75 (Short) oder unter 25 (Long)\nUmkehr-Kerzenmuster: Pin Bar, Engulfing, Doji\nVolumenrückgang bestätigt Erschöpfung\nEinstieg beim Break der Trigger-Kerze\nStop über/unter dem Extrempunkt\nZiel: VWAP oder nächster Strukturlevel'},
+  {id:'p4',name:'Breakout',timeframe:'Daily/1h',description:'Ausbruch aus einer engen Konsolidierungszone mit erhöhtem Volumen. Klassisches Momentum-Setup.',rules:'Konsolidierung mind. 5–10 Kerzen\nBreakout mit deutlich erhöhtem Volumen (>150% Ø)\nEinstieg beim Retest der gebrochenen Zone\nStop unter den Breakout-Level\nZiel: Mindestens 2x Risiko\nFalse-Break-Risiko beachten'},
+  {id:'p5',name:'Trendfolge',timeframe:'4h/Daily',description:'Pullback-Einstiege in einen bereits bestätigten Trend. Wird mit dem übergeordneten Trend gehandelt – „Trend is your friend".',rules:'Trend klar bestätigt: Higher Highs & Higher Lows (Long)\nPullback auf 50er oder 61,8er Fibonacci\nMomentum kehrt zurück (z.B. MACD-Kreuz)\nEinstieg nach Bestätigungskerze\nTrailing Stop 2x ATR\nKein Einstieg gegen den Trend'},
+  {id:'p6',name:'Million Moves',timeframe:'5min/15min',description:'Setup für hochvolatile Intraday-Bewegungen nach einem Katalysator (News, Earnings, Gap). Zielt auf schnelle, große Moves mit engen Stops.',rules:'Katalysator vorhanden (News, Earnings, Gap)\nPre-Market Volumen deutlich erhöht\nKlare Richtung beim Marktöffnung\nEinstieg bei erstem Pullback nach Eröffnungsimpuls\nEnger Stop (unter/über der Eröffnungskerze)\nZiel: 3–5x Risiko oder Tageshoch/-tief\nNur die ersten 30–60 Minuten handeln'},
+  {id:'p7',name:'Support Bounce',timeframe:'1h',description:'Long-Trades an klar definierten historischen Support-Zonen. Preis testet Support und zeigt Umkehrsignale.',rules:'Support mind. 2x zuvor gehalten\nVolumen nimmt beim Test ab\nUmkehrsignal im M15 (Pin Bar, Engulfing)\nStop unter den Support-Bereich\nZiel: Nächste Widerstandszone\nSetup invalidiert bei Close unter Support'},
+  {id:'p8',name:'Mean Reversion',timeframe:'15min',description:'Trades zurück zum gleitenden Durchschnitt nach Überdehnung. Funktioniert am besten in Ranging-Märkten.',rules:'Preis mind. 2 ATR vom 20er MA entfernt\nRSI unter 30 (Long) oder über 70 (Short)\nUmkehr-Kerze abwarten\nStop hinter den Extrempunkt\nZiel: 20er MA oder VWAP\nNicht in starken Trendbewegungen handeln'},
+  {id:'p9',name:'Gap Fill',timeframe:'5min/Daily',description:'Gaps (Kurslücken) tendieren dazu, geschlossen zu werden. Einstieg nach Bestätigung in Richtung Gap-Fill.',rules:'Gap von mind. 0,5% (Aktien) oder 0,3% (Futures)\nErste 15 Minuten abwarten\nRichtung des Gap-Fills bestätigen\nEinstieg beim ersten Pullback nach Bestätigung\nStop über/unter Eröffnungscandle\nZiel: Gap-Close (vorheriger Schlusskurs)\nBei News-Gap Vorsicht – Gap bleibt oft offen'},
+  {id:'p10',name:'VWAP Bounce',timeframe:'5min/15min',description:'VWAP (Volume Weighted Average Price) fungiert als dynamischer Support/Widerstand. Einstieg bei Rückkehr zum VWAP.',rules:'Preis ist klar über/unter dem VWAP\nRückkehr zum VWAP\nBestätigungskerze zeigt Ablehnung\nVolumen beim Bounce erhöht\nStop auf der anderen Seite des VWAP\nZiel: Tages-Hoch/Tief oder 1,5x Risiko\nNur in trending Märkten effektiv'},
+  {id:'p11',name:'Catalyst / News Play',timeframe:'1min/5min',description:'Schnelle Reaktion auf marktbewegende Nachrichten (Earnings, Fed, Wirtschaftsdaten). Sehr kurzfristiger Einstieg mit engem Stop.',rules:'Katalysator klar identifiziert\nErste Kerze nach News abwarten\nRichtung und Momentum bestätigen\nEinstieg in erster Minute nach Konsolidierung\nExtrem enger Stop\nZiel: 2–3x Risiko oder Vortages-Level\nPosition schnell schließen – Moves oft kurz'},
+  {id:'p12',name:'Opening Drive',timeframe:'1min/5min',description:'Der Markt öffnet mit starkem Momentum in eine Richtung ohne nennenswerten Pullback. Einstieg im ersten sauberen Pullback nach dem Impuls.',rules:'Marktöffnung mit Momentum (keine Ranging-Eröffnung)\nErste 1–2 Minuten Richtung abwarten\nPullback auf 50% der Eröffnungskerze\nEinstieg bei Breakout der Pullback-Kerze\nStop unter Pullback-Tief\nZiel: 2x Größe der Eröffnungskerze'},
 ];
 
 // SVG Charts
@@ -180,6 +199,125 @@ function HBarChart({data,xKey,yKey}){
   </svg>`;
 }
 
+// ── Donut Chart ──
+function DonutChart({segments,size=160,thick=26,label,sub}){
+  if(!segments||!segments.length)return null;
+  const total=segments.reduce((s,g)=>s+Math.abs(g.value),0);
+  if(!total)return null;
+  const r=(size-thick)/2,cx=size/2,cy=size/2,circ=2*Math.PI*r;
+  let off=0;
+  const slices=segments.map(g=>{
+    const pct=Math.abs(g.value)/total;
+    const dash=pct*circ,gap=circ-dash;
+    const slice={...g,dash,gap,off};
+    off+=dash;
+    return slice;
+  });
+  return html`<div style=${{position:'relative',width:size,height:size,margin:'0 auto'}}>
+    <svg viewBox="0 0 ${size} ${size}" style=${{width:size,height:size,transform:'rotate(-90deg)'}}>
+      ${slices.map((s,i)=>html`<circle key=${i} cx=${cx} cy=${cy} r=${r}
+        fill="none" stroke=${s.color} stroke-width=${thick}
+        stroke-dasharray="${s.dash} ${s.gap}"
+        stroke-dashoffset=${-s.off}
+        stroke-linecap="butt"/>`)}
+    </svg>
+    <div style=${{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
+      ${label?html`<div style=${{fontSize:18,fontWeight:800,color:C.text,lineHeight:1}}>${label}</div>`:''}
+      ${sub?html`<div style=${{fontSize:10,color:C.muted,marginTop:2,fontWeight:600}}>${sub}</div>`:''}
+    </div>
+  </div>`;
+}
+
+// ── Scatter Plot ──
+function ScatterPlot({data,h=160}){
+  if(!data||data.length<2)return null;
+  const W=500,PL=36,PR=10,PT=10,PB=24;
+  const iW=W-PL-PR,iH=h-PT-PB;
+  const xs=data.map(d=>d.x),ys=data.map(d=>d.y);
+  const minX=Math.min(...xs),maxX=Math.max(...xs)||1;
+  const minY=Math.min(...ys),maxY=Math.max(...ys)||1;
+  const sx=v=>PL+(v-minX)/(maxX-minX||1)*iW;
+  const sy=v=>PT+iH-(v-minY)/(maxY-minY||1)*iH;
+  return html`<svg viewBox="0 0 ${W} ${h}" style=${{width:'100%',height:h}}>
+    <line x1=${PL} y1=${PT} x2=${PL} y2=${PT+iH} stroke=${C.border2} stroke-width="1"/>
+    <line x1=${PL} y1=${PT+iH} x2=${W-PR} y2=${PT+iH} stroke=${C.border2} stroke-width="1"/>
+    ${minY<0&&maxY>0?html`<line x1=${PL} y1=${sy(0)} x2=${W-PR} y2=${sy(0)} stroke=${C.border2} stroke-width="1" stroke-dasharray="4 3"/>`:''}
+    ${data.map((d,i)=>html`<circle key=${i} cx=${sx(d.x)} cy=${sy(d.y)} r="5"
+      fill=${d.y>=0?C.green:C.red} opacity=".8"/>`)}
+    <text x=${PL-4} y=${sy(maxY)+4} text-anchor="end" font-size="9" fill=${C.muted}>${maxY.toFixed(1)}</text>
+    <text x=${PL-4} y=${sy(minY)+4} text-anchor="end" font-size="9" fill=${C.muted}>${minY.toFixed(1)}</text>
+    <text x=${PL} y=${h-2} font-size="9" fill=${C.muted}>R-Multiple</text>
+  </svg>`;
+}
+
+// ── Screenshot Viewer (Trade Chart Modal — Screenshot only) ──
+function TradeChart({trade,onClose}){
+  if(!trade)return null;
+  const entry=trade.entry,exit=trade.exit,sl=trade.stopLoss,tp=trade.profitTarget,side=trade.side||'Long';
+  const p=exit!=null&&entry!=null?((exit-entry)*(side==='Long'?1:-1)-(trade.fees||0)):trade.pnlOverride!==undefined?trade.pnlOverride:null;
+  const fmtL=v=>v==null?'–':v>=10000?v.toFixed(0):v>=1000?v.toFixed(1):v>=10?v.toFixed(2):v.toFixed(4);
+  const hasImage=!!trade.chartImage;
+
+  return html`<div style=${{position:'fixed',inset:0,zIndex:300,background:'rgba(0,0,0,.92)',display:'flex',alignItems:'center',justifyContent:'center',padding:12}} onClick=${onClose}>
+    <div onClick=${e=>e.stopPropagation()} style=${{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,width:'100%',maxWidth:1000,height:'92vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 24px 80px rgba(0,0,0,.6)'}}>
+      <!-- Header -->
+      <div style=${{padding:'11px 18px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8,flexShrink:0}}>
+        <div style=${{display:'flex',alignItems:'center',gap:10}}>
+          <span style=${{fontWeight:800,fontSize:17}}>${trade.symbol}</span>
+          <span style=${{fontWeight:700,fontSize:13,color:side==='Long'?C.green:C.red}}>${side==='Long'?'▲':'▼'} ${side}</span>
+          <span style=${{color:C.muted,fontSize:12}}>${trade.date}${trade.time?' '+trade.time:''}</span>
+          ${p!==null?html`<span style=${{fontWeight:800,fontSize:14,color:p>=0?C.green:C.red}}>${p>=0?'+':''}${p.toFixed(2)}</span>`:''}
+        </div>
+        <div style=${{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+          ${entry!=null?html`<span style=${{background:C.accent+'22',color:C.accent,borderRadius:6,padding:'3px 8px',fontSize:12,fontWeight:600}}>Entry ${fmtL(entry)}</span>`:''}
+          ${exit!=null?html`<span style=${{background:(p>=0?C.green:C.red)+'22',color:p>=0?C.green:C.red,borderRadius:6,padding:'3px 8px',fontSize:12,fontWeight:600}}>Exit ${fmtL(exit)}</span>`:''}
+          ${sl?html`<span style=${{background:C.red+'18',color:C.red,borderRadius:6,padding:'3px 8px',fontSize:12,fontWeight:600}}>SL ${fmtL(sl)}</span>`:''}
+          ${tp?html`<span style=${{background:C.green+'18',color:C.green,borderRadius:6,padding:'3px 8px',fontSize:12,fontWeight:600}}>TP ${fmtL(tp)}</span>`:''}
+          <button onClick=${onClose} style=${{background:'transparent',border:`1px solid ${C.border}`,borderRadius:8,padding:'5px 13px',color:C.muted,cursor:'pointer',fontSize:13,marginLeft:4}}>✕</button>
+        </div>
+      </div>
+      <!-- Body -->
+      <div style=${{flex:1,display:'flex',minHeight:0,overflow:'hidden'}}>
+        ${hasImage?html`
+          <div style=${{flex:1,overflow:'auto',display:'flex',alignItems:'flex-start',justifyContent:'center',padding:14,background:C.bg}}>
+            <img src=${trade.chartImage} style=${{maxWidth:'100%',height:'auto',borderRadius:10,boxShadow:'0 4px 24px rgba(0,0,0,.3)',display:'block'}}/>
+          </div>
+          <div style=${{width:170,flexShrink:0,borderLeft:`1px solid ${C.border}`,padding:'16px 13px',display:'flex',flexDirection:'column',gap:9,background:C.card2,overflowY:'auto'}}>
+            <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em',marginBottom:4}}>TRADE LEVELS</div>
+            ${entry!=null?html`<div style=${{background:C.accent+'18',borderRadius:8,padding:'9px 11px',border:`1px solid ${C.accent}44`}}>
+              <div style=${{fontSize:9,fontWeight:700,color:C.accent,letterSpacing:'.08em',marginBottom:2}}>ENTRY</div>
+              <div style=${{fontSize:16,fontWeight:800,color:C.accent,fontFamily:'monospace'}}>${fmtL(entry)}</div>
+            </div>`:''}
+            ${exit!=null?html`<div style=${{background:(p>=0?C.green:C.red)+'18',borderRadius:8,padding:'9px 11px',border:`1px solid ${(p>=0?C.green:C.red)}44`}}>
+              <div style=${{fontSize:9,fontWeight:700,color:p>=0?C.green:C.red,letterSpacing:'.08em',marginBottom:2}}>EXIT</div>
+              <div style=${{fontSize:16,fontWeight:800,color:p>=0?C.green:C.red,fontFamily:'monospace'}}>${fmtL(exit)}</div>
+            </div>`:''}
+            ${sl?html`<div style=${{background:C.red+'12',borderRadius:8,padding:'9px 11px',border:`1px solid ${C.red}33`}}>
+              <div style=${{fontSize:9,fontWeight:700,color:C.red,letterSpacing:'.08em',marginBottom:2}}>STOP LOSS</div>
+              <div style=${{fontSize:16,fontWeight:800,color:C.red,fontFamily:'monospace'}}>${fmtL(sl)}</div>
+            </div>`:''}
+            ${tp?html`<div style=${{background:C.green+'12',borderRadius:8,padding:'9px 11px',border:`1px solid ${C.green}33`}}>
+              <div style=${{fontSize:9,fontWeight:700,color:C.green,letterSpacing:'.08em',marginBottom:2}}>TAKE PROFIT</div>
+              <div style=${{fontSize:16,fontWeight:800,color:C.green,fontFamily:'monospace'}}>${fmtL(tp)}</div>
+            </div>`:''}
+            ${p!==null?html`<div style=${{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:'auto'}}>
+              <div style=${{fontSize:9,fontWeight:700,color:C.muted,marginBottom:3}}>P&L</div>
+              <div style=${{fontSize:20,fontWeight:900,color:p>=0?C.green:C.red,fontFamily:'monospace'}}>${p>=0?'+':''}${p.toFixed(2)}</div>
+            </div>`:''}
+            <div style=${{fontSize:9,color:C.muted,marginTop:2,lineHeight:1.6}}>Screenshot aus Trade-Formular · ✎ zum Ändern</div>
+          </div>
+        `:html`
+          <div style=${{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16,color:C.muted,padding:40}}>
+            <div style=${{fontSize:48}}>📷</div>
+            <div style=${{fontSize:15,fontWeight:600,color:C.text}}>Kein Screenshot vorhanden</div>
+            <div style=${{fontSize:13,textAlign:'center',maxWidth:300}}>Bearbeite diesen Trade und füge unter „Chart Screenshot" ein Bild deines Broker-Charts ein.</div>
+          </div>
+        `}
+      </div>
+    </div>
+  </div>`;
+}
+
 // UI Components
 function Card({children,style={},className=''}){
   return html`<div class=${'shadow '+className} style=${{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,...style}}>${children}</div>`;
@@ -199,34 +337,21 @@ function Btn({children,onClick,variant='primary',disabled=false,style={}}){
     ${children}
   </button>`;
 }
-function SC({label,value,sub,color,small}){
-  return html`<${Card} style=${{padding:'16px 18px'}}>
-    <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.08em',textTransform:'uppercase',marginBottom:6}}>${label}</div>
-    <div style=${{fontSize:small?15:22,fontWeight:800,color:color||C.text,lineHeight:1.1,letterSpacing:'-.01em'}}>${value}</div>
-    ${sub?html`<div style=${{fontSize:11,color:C.muted,marginTop:4}}>${sub}</div>`:''}
-  </${Card}>`;
+// Stat Card — clean Tradervue-style
+function SC({label,value,sub,color,trend}){
+  return html`<div class="shadow" style=${{background:C.card,border:`1px solid ${C.border}`,borderRadius:11,padding:'15px 18px',borderLeft:`3px solid ${color||C.border2}`}}>
+    <div style=${{fontSize:9.5,fontWeight:700,color:C.muted,letterSpacing:'.09em',textTransform:'uppercase',marginBottom:7}}>${label}</div>
+    <div style=${{fontSize:21,fontWeight:800,color:color||C.text,lineHeight:1,letterSpacing:'-.02em'}}>${value}</div>
+    ${sub?html`<div style=${{fontSize:11,color:C.muted,marginTop:5,lineHeight:1.3}}>${sub}</div>`:''}
+  </div>`;
 }
-
-// Zella Score Gauge
-function ZellaGauge({score}){
-  if(score===null)return html`<${Card} style=${{padding:20,textAlign:'center'}}>
-    <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:8}}>ZELLA SCORE</div>
-    <div style=${{fontSize:28,fontWeight:800,color:C.muted}}>–</div>
-    <div style=${{fontSize:11,color:C.muted,marginTop:4}}>Min. 3 Trades nötig</div>
-  </${Card}>`;
-  const color=score>=70?C.green:score>=45?C.yellow:C.red;
-  const label=score>=70?'Exzellent':score>=55?'Gut':score>=40?'Mittelmäßig':'Schwach';
-  const r=38,cx=55,cy=55,circ=2*Math.PI*r,dash=score/100*circ;
-  return html`<${Card} style=${{padding:'16px',textAlign:'center'}}>
-    <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:4}}>ZELLA SCORE</div>
-    <svg viewBox="0 0 110 110" style=${{width:110,height:110,margin:'0 auto',display:'block'}}>
-      <circle cx=${cx} cy=${cy} r=${r} fill="none" stroke=${C.border2} stroke-width="8"/>
-      <circle cx=${cx} cy=${cy} r=${r} fill="none" stroke=${color} stroke-width="8"
-        stroke-dasharray="${dash} ${circ-dash}" stroke-linecap="round" transform="rotate(-90 55 55)"/>
-      <text x=${cx} y="52" text-anchor="middle" font-size="24" font-weight="800" fill=${color}>${score}</text>
-      <text x=${cx} y="68" text-anchor="middle" font-size="10" fill=${color}>${label}</text>
-    </svg>
-  </${Card}>`;
+// Hero stat strip — large numbers for top of dashboard
+function HStat({label,value,sub,color}){
+  return html`<div style=${{flex:'1 1 120px',padding:'16px 20px',borderRight:`1px solid ${C.border}`}}>
+    <div style=${{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:'.1em',textTransform:'uppercase',marginBottom:6}}>${label}</div>
+    <div style=${{fontSize:26,fontWeight:900,color:color||C.text,lineHeight:1,letterSpacing:'-.02em',fontVariantNumeric:'tabular-nums'}}>${value}</div>
+    ${sub?html`<div style=${{fontSize:11,color:C.muted,marginTop:4}}>${sub}</div>`:''}
+  </div>`;
 }
 
 // Tilt Meter
@@ -301,8 +426,23 @@ function Ico({n,size=18,color='currentColor'}){const d=ICO[n];if(!d)return null;
   </svg>`;}
 
 // Trade Modal
+// Compress image to JPEG, max width 1400px
+function compressImage(file,maxW=1400,q=0.82){
+  return new Promise(resolve=>{
+    const img=new Image(),r=new FileReader();
+    r.onload=e=>{img.onload=()=>{
+      const cv=document.createElement('canvas');
+      const ratio=Math.min(1,maxW/img.width);
+      cv.width=Math.round(img.width*ratio);cv.height=Math.round(img.height*ratio);
+      cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
+      resolve(cv.toDataURL('image/jpeg',q));
+    };img.src=e.target.result;};
+    r.readAsDataURL(file);
+  });
+}
+
 function TradeModal({onSave,onClose,onDelete,initial,playbook}){
-  const blank={date:new Date().toISOString().slice(0,10),time:'',symbol:'',type:'Stock',side:'Long',entry:'',exit:'',qty:'',fees:'',stopLoss:'',profitTarget:'',notes:'',setup:'',session:'',status:'closed',rating:0,reviewed:false,tags:{mentalState:'',marketCondition:'',mistake:''}};
+  const blank={date:new Date().toISOString().slice(0,10),time:'',symbol:'',type:'Stock',side:'Long',entry:'',exit:'',qty:'',fees:'',stopLoss:'',profitTarget:'',notes:'',setup:'',session:'',status:'closed',rating:0,reviewed:false,tags:{mentalState:'',marketCondition:'',mistake:''},chartImage:null};
   const [f,setF]=useState(initial?{...blank,...initial,entry:initial.entry||'',exit:initial.exit||'',qty:initial.qty||'',fees:initial.fees||'',stopLoss:initial.stopLoss||'',profitTarget:initial.profitTarget||'',session:initial.session||''}:blank);
   const s=(k,v)=>setF(x=>({...x,[k]:v}));
   const st=(k,v)=>setF(x=>({...x,tags:{...x.tags,[k]:v}}));
@@ -358,6 +498,25 @@ function TradeModal({onSave,onClose,onDelete,initial,playbook}){
 
         <div style=${{gridColumn:'1/-1'}}><label style=${lbl}>Notizen</label><textarea rows="3" value=${f.notes} onChange=${e=>s('notes',e.target.value)} placeholder="Trade-Notizen..." style=${{...inp,resize:'vertical'}}/></div>
 
+        <!-- Chart Screenshot -->
+        <div style=${{gridColumn:'1/-1'}}>
+          <label style=${lbl}>📷 Chart Screenshot</label>
+          ${f.chartImage?html`<div style=${{position:'relative',marginBottom:8}}>
+            <img src=${f.chartImage} style=${{width:'100%',borderRadius:10,border:`1px solid ${C.border}`,maxHeight:220,objectFit:'contain',background:C.card2,display:'block'}}/>
+            <button onClick=${()=>s('chartImage',null)} style=${{position:'absolute',top:7,right:7,background:'rgba(0,0,0,.72)',border:'none',borderRadius:7,color:'#fff',padding:'4px 10px',cursor:'pointer',fontSize:12,fontWeight:600}}>✕ Entfernen</button>
+          </div>`:''}
+          <label style=${{display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'11px',borderRadius:9,border:`2px dashed ${C.border2}`,cursor:'pointer',color:C.muted,fontSize:13,fontWeight:600,transition:'border-color .15s'}}
+            onMouseEnter=${e=>e.currentTarget.style.borderColor=C.accent}
+            onMouseLeave=${e=>e.currentTarget.style.borderColor=C.border2}>
+            <input type="file" accept="image/*" style=${{display:'none'}} onChange=${async e=>{
+              const file=e.target.files?.[0];if(!file)return;
+              try{const img=await compressImage(file);s('chartImage',img);}catch{}
+              e.target.value='';
+            }}/>
+            ${f.chartImage?'🔄 Bild ersetzen':'📁 Screenshot wählen (PNG, JPG, WebP)'}
+          </label>
+        </div>
+
         <div style=${{gridColumn:'1/-1',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10}}>
           <div><label style=${{...lbl,display:'block',marginBottom:6}}>Bewertung</label><${Stars} value=${f.rating} onChange=${v=>s('rating',v)}/></div>
           <label style=${{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:13}}>
@@ -381,6 +540,150 @@ function TradeModal({onSave,onClose,onDelete,initial,playbook}){
 }
 
 // Dashboard
+// ── Day of Week P&L chart ──
+function DayOfWeekChart({trades}){
+  const cl=trades.filter(t=>t.exit);
+  const DAYS=['Mo','Di','Mi','Do','Fr','Sa','So'];
+  const buckets=DAYS.map(d=>({d,p:0,n:0,w:0}));
+  cl.forEach(t=>{
+    const dow=(new Date(t.date).getDay()+6)%7; // Mon=0
+    const p=pnl(t)||0;
+    buckets[dow].p+=p;buckets[dow].n++;if(p>0)buckets[dow].w++;
+  });
+  const mx=Math.max(...buckets.map(b=>Math.abs(b.p)),1);
+  const W=500,H=160,PL=28,PR=8,PT=8,PB=30,iW=W-PL-PR,iH=H-PT-PB;
+  const bW=iW/7*0.62,mid=PT+iH/2;
+  const gId='dow'+Math.random().toString(36).slice(2,6);
+  return html`<svg viewBox="0 0 ${W} ${H}" style=${{width:'100%',height:H}}>
+    <defs>
+      <linearGradient id=${gId+'g'} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color=${C.green} stop-opacity=".9"/><stop offset="100%" stop-color=${C.green} stop-opacity=".5"/></linearGradient>
+      <linearGradient id=${gId+'r'} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color=${C.red} stop-opacity=".5"/><stop offset="100%" stop-color=${C.red} stop-opacity=".9"/></linearGradient>
+    </defs>
+    <line x1=${PL} y1=${mid} x2=${W-PR} y2=${mid} stroke=${C.border2} stroke-width="1"/>
+    ${buckets.map((b,i)=>{
+      const x=PL+i*(iW/7)+(iW/7-bW)/2;
+      const bh=Math.abs(b.p)/mx*(iH/2);
+      const isPos=b.p>=0;
+      const y=isPos?mid-bh:mid;
+      const wr=b.n?b.w/b.n*100:0;
+      return html`<g key=${i}>
+        <rect x=${x} y=${y} width=${bW} height=${bh||0} fill=${isPos?`url(#${gId+'g'})`:  `url(#${gId+'r'})`} rx="4"/>
+        <text x=${x+bW/2} y=${H-4} text-anchor="middle" font-size="10" fill=${b.n?C.text:C.muted} font-weight=${b.n?'700':'400'}>${b.d}</text>
+        ${b.n?html`<text x=${x+bW/2} y=${isPos?y-5:y+bh+12} text-anchor="middle" font-size="8.5" fill=${isPos?C.green:C.red} font-weight="600">${isPos?'+':''}${b.p>=1000?(b.p/1000).toFixed(1)+'k':b.p.toFixed(0)}</text>`:''}
+        ${b.n>0?html`<text x=${x+bW/2} y=${H-16} text-anchor="middle" font-size="7.5" fill=${C.muted}>${wr.toFixed(0)}%</text>`:''}
+      </g>`;
+    })}
+  </svg>`;
+}
+
+// ── Setup-Performance horizontal bars ──
+function SetupPerfChart({trades}){
+  const cl=trades.filter(t=>t.exit&&t.setup);
+  if(!cl.length) return html`<div style=${{color:C.muted,fontSize:12,padding:'20px 0',textAlign:'center'}}>Kein Setup eingetragen</div>`;
+  const map={};
+  cl.forEach(t=>{const p=pnl(t)||0;if(!map[t.setup])map[t.setup]={p:0,n:0,w:0};map[t.setup].p+=p;map[t.setup].n++;if(p>0)map[t.setup].w++;});
+  const rows=Object.entries(map).sort((a,b)=>b[1].p-a[1].p).slice(0,8);
+  const mx=Math.max(...rows.map(([,v])=>Math.abs(v.p)),1);
+  const RH=30,W=500,PL=90,PR=70,PT=4,iW=W-PL-PR,H=rows.length*RH+PT+8,bH=16;
+  const midX=PL+iW/2;
+  return html`<svg viewBox="0 0 ${W} ${H}" style=${{width:'100%',height:H}}>
+    <line x1=${midX} y1=${PT} x2=${midX} y2=${H} stroke=${C.border2} stroke-width="1"/>
+    ${rows.map(([name,v],i)=>{
+      const y=PT+i*RH+(RH-bH)/2;
+      const bw=Math.abs(v.p)/mx*(iW/2);
+      const isPos=v.p>=0;
+      const bx=isPos?midX:midX-bw;
+      const wr=(v.w/v.n*100).toFixed(0)+'%';
+      return html`<g key=${i}>
+        <text x=${PL-6} y=${y+bH/2+4} text-anchor="end" font-size="10.5" fill=${C.text} font-weight="600">${name.length>11?name.slice(0,10)+'…':name}</text>
+        <rect x=${bx} y=${y} width=${bw||1} height=${bH} fill=${isPos?C.green:C.red} rx="3" opacity=".85"/>
+        <text x=${isPos?midX+bw+5:midX-bw-5} y=${y+bH/2+4} font-size="9.5" fill=${isPos?C.green:C.red} text-anchor=${isPos?'start':'end'} font-weight="700">${isPos?'+':''}${v.p.toFixed(0)}</text>
+        <text x=${W-4} y=${y+bH/2+4} text-anchor="end" font-size="9" fill=${C.muted}>${wr} · ${v.n}</text>
+      </g>`;
+    })}
+  </svg>`;
+}
+
+// ── Mental State Impact ──
+function MentalPerfChart({trades}){
+  const cl=trades.filter(t=>t.exit&&t.tags&&t.tags.mentalState);
+  if(!cl.length) return html`<div style=${{color:C.muted,fontSize:12,padding:'20px 0',textAlign:'center'}}>Kein Mental State erfasst</div>`;
+  const map={};
+  cl.forEach(t=>{const p=pnl(t)||0,ms=t.tags.mentalState;if(!map[ms])map[ms]={p:0,n:0,w:0};map[ms].p+=p;map[ms].n++;if(p>0)map[ms].w++;});
+  const rows=Object.entries(map).map(([k,v])=>([k,{...v,avg:v.p/v.n}])).sort((a,b)=>b[1].avg-a[1].avg).slice(0,8);
+  const mx=Math.max(...rows.map(([,v])=>Math.abs(v.avg)),1);
+  const RH=28,W=500,PL=90,PR=70,PT=4,iW=W-PL-PR,H=rows.length*RH+PT+8,bH=14;
+  const midX=PL+iW/2;
+  return html`<svg viewBox="0 0 ${W} ${H}" style=${{width:'100%',height:H}}>
+    <line x1=${midX} y1=${PT} x2=${midX} y2=${H} stroke=${C.border2} stroke-width="1"/>
+    ${rows.map(([name,v],i)=>{
+      const y=PT+i*RH+(RH-bH)/2;
+      const bw=Math.abs(v.avg)/mx*(iW/2);
+      const isPos=v.avg>=0;
+      const bx=isPos?midX:midX-bw;
+      return html`<g key=${i}>
+        <text x=${PL-6} y=${y+bH/2+3.5} text-anchor="end" font-size="10" fill=${C.text}>${name}</text>
+        <rect x=${bx} y=${y} width=${bw||1} height=${bH} fill=${isPos?C.green:C.red} rx="3" opacity=".8"/>
+        <text x=${isPos?midX+bw+5:midX-bw-5} y=${y+bH/2+3.5} font-size="9" fill=${isPos?C.green:C.red} text-anchor=${isPos?'start':'end'} font-weight="700">${isPos?'+':''}${v.avg.toFixed(0)}</text>
+        <text x=${W-4} y=${y+bH/2+3.5} text-anchor="end" font-size="8.5" fill=${C.muted}>${v.n}×</text>
+      </g>`;
+    })}
+  </svg>`;
+}
+
+// ── Session Performance mini-bars ──
+function SessionPerfChart({trades}){
+  const cl=trades.filter(t=>t.exit&&t.session);
+  if(!cl.length) return html`<div style=${{color:C.muted,fontSize:12,padding:'20px 0',textAlign:'center'}}>Keine Session eingetragen</div>`;
+  const map={};
+  cl.forEach(t=>{const p=pnl(t)||0,s=t.session.split(' ')[0];if(!map[s])map[s]={p:0,n:0,w:0};map[s].p+=p;map[s].n++;if(p>0)map[s].w++;});
+  const rows=Object.entries(map).sort((a,b)=>b[1].p-a[1].p);
+  const mx=Math.max(...rows.map(([,v])=>Math.abs(v.p)),1);
+  const W=500,H=Math.max(rows.length*32+20,80),PL=80,PR=72,PT=4,iW=W-PL-PR,bH=16,RH=32,midX=PL+iW/2;
+  return html`<svg viewBox="0 0 ${W} ${H}" style=${{width:'100%',height:H}}>
+    <line x1=${midX} y1=${PT} x2=${midX} y2=${H} stroke=${C.border2} stroke-width="1"/>
+    ${rows.map(([name,v],i)=>{
+      const y=PT+i*RH+(RH-bH)/2;
+      const bw=Math.abs(v.p)/mx*(iW/2);
+      const isPos=v.p>=0;
+      return html`<g key=${i}>
+        <text x=${PL-6} y=${y+bH/2+3.5} text-anchor="end" font-size="9.5" fill=${C.text} font-weight="600">${name}</text>
+        <rect x=${isPos?midX:midX-bw} y=${y} width=${bw||1} height=${bH} fill=${isPos?C.green:C.red} rx="3" opacity=".82"/>
+        <text x=${isPos?midX+bw+5:midX-bw-5} y=${y+bH/2+3.5} font-size="9" fill=${isPos?C.green:C.red} text-anchor=${isPos?'start':'end'} font-weight="700">${isPos?'+':''}${v.p.toFixed(0)}</text>
+        <text x=${W-4} y=${y+bH/2+3.5} text-anchor="end" font-size="8.5" fill=${C.muted}>${(v.w/v.n*100).toFixed(0)}% · ${v.n}</text>
+      </g>`;
+    })}
+  </svg>`;
+}
+
+// ── Drawdown chart ──
+function DrawdownChart({trades,h=120}){
+  const sorted=[...trades].filter(t=>t.exit).sort((a,b)=>a.date.localeCompare(b.date));
+  if(sorted.length<2) return null;
+  let eq=0,peak=0;
+  const dd=sorted.map(t=>{eq+=pnl(t)||0;if(eq>peak)peak=eq;return{date:t.date.slice(5),v:peak>0?-(peak-eq)/peak*100:0};});
+  const W=600,PL=40,PR=8,PT=4,PB=22,iW=W-PL-PR,iH=h-PT-PB;
+  const minV=Math.min(...dd.map(d=>d.v),-0.5);
+  const py=v=>PT+iH*(1-v/minV);
+  const px=i=>PL+i/(dd.length-1||1)*iW;
+  const pts=dd.map((d,i)=>`${px(i)},${py(d.v)}`).join(' ');
+  const area=`M${PL},${PT} ${dd.map((d,i)=>`L${px(i)},${py(d.v)}`).join(' ')} L${PL+iW},${PT} Z`;
+  const step=Math.max(1,Math.floor(dd.length/5));
+  return html`<svg viewBox="0 0 ${W} ${h}" style=${{width:'100%',height:h}}>
+    <defs><linearGradient id="ddg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color=${C.red} stop-opacity=".35"/>
+      <stop offset="100%" stop-color=${C.red} stop-opacity=".05"/>
+    </linearGradient></defs>
+    ${[-0,-25,-50,-75,-100].filter(v=>v>=minV).map((v,i)=>html`<g key=${i}>
+      <line x1=${PL} y1=${py(v)} x2=${W-PR} y2=${py(v)} stroke=${C.border} stroke-dasharray="4 3" stroke-width=".5"/>
+      <text x=${PL-4} y=${py(v)+4} text-anchor="end" font-size="8.5" fill=${C.muted}>${v.toFixed(0)}%</text>
+    </g>`)}
+    <path d=${area} fill="url(#ddg)"/>
+    <polyline points=${pts} fill="none" stroke=${C.red} stroke-width="1.8" stroke-linejoin="round"/>
+    ${dd.filter((_,i)=>i%step===0).map((d,i)=>html`<text key=${i} x=${px(dd.indexOf(d))} y=${h-4} text-anchor="middle" font-size="8.5" fill=${C.muted}>${d.date}</text>`)}
+  </svg>`;
+}
+
 function Dashboard({trades,onEdit,capital,onCapital}){
   const today=new Date().toISOString().slice(0,10);
   const cl=trades.filter(t=>t.exit);
@@ -416,17 +719,24 @@ function Dashboard({trades,onEdit,capital,onCapital}){
   const exp=calcExpectancy(trades);
   const dayWr=calcDayWinPct(trades);
   const streak=calcStreak(trades);
-  const zScore=calcZellaScore(trades);
   const tilt=calcTilt(trades);
+  const sharpe=calcSharpe(trades);
+  const consec=calcConsecWL(trades);
+  const avgR=calcAvgRMul(trades);
   const sorted=[...cl].sort((a,b)=>a.date.localeCompare(b.date));
   let eq=0;const eqD=sorted.map(t=>({date:t.date.slice(5),eq:+(eq+=pnl(t)||0).toFixed(2)}));
   const mon={};sorted.forEach(t=>{const m=t.date.slice(0,7);mon[m]=(mon[m]||0)+(pnl(t)||0);});
   const mD=Object.entries(mon).map(([m,p])=>({m:m.slice(5),p:+p.toFixed(2)}));
-  const rec=[...trades].sort((a,b)=>b.date.localeCompare(a.date)||((b.time||'').localeCompare(a.time||''))).slice(0,5);
+  const rec=[...trades].sort((a,b)=>b.date.localeCompare(a.date)||((b.time||'').localeCompare(a.time||''))).slice(0,8);
   const dayMap={};cl.forEach(t=>{dayMap[t.date]=(dayMap[t.date]||0)+(pnl(t)||0);});
   const tradingDays=Object.keys(dayMap).length;
   const winDays=Object.values(dayMap).filter(p=>p>0).length;
   const rf=ddAbs>0?tot/ddAbs:0;
+  const bestTrade=ps.length?Math.max(...ps):null;
+  const worstTrade=ps.length?Math.min(...ps):null;
+  const totalFees=trades.filter(t=>t.exit).reduce((s,t)=>s+(t.fees||0),0);
+  const payoff=avgL>0?avgW/avgL:null;
+  const calmar=ddPct>0?tot/ddAbs:null; // recovery factor variant
 
   const dateFmt=new Intl.DateTimeFormat('de-DE',{weekday:'long',day:'numeric',month:'long'}).format(new Date());
 
@@ -547,51 +857,228 @@ function Dashboard({trades,onEdit,capital,onCapital}){
 
     <!-- ══ GESAMT ══ -->
     <div>
-      <div style=${{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
-        <div style=${{fontSize:11,fontWeight:800,color:C.muted,letterSpacing:'.1em'}}>GESAMT</div>
+      <div style=${{display:'flex',alignItems:'center',gap:10,marginBottom:14}}>
+        <div style=${{fontSize:11,fontWeight:800,color:C.muted,letterSpacing:'.1em'}}>PERFORMANCE</div>
         <div style=${{flex:1,height:1,background:C.border}}></div>
+        ${ps.length>0?html`<span style=${{fontSize:11,color:C.muted}}>${ps.length} Trades · ${tradingDays} Tage</span>`:''}
       </div>
 
-      <div style=${{display:'flex',flexDirection:'column',gap:14}}>
-        <div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:10}}>
-          <${SC} label="Gesamt P&L" value=${fd(tot)} color=${tot>=0?C.green:C.red}/>
-          <${SC} label="Win Rate" value=${wr.toFixed(1)+'%'} sub=${ws.length+'W / '+ls.length+'L'} color=${wr>=50?C.green:C.red}/>
-          <${SC} label="Day Win %" value=${dayWr.toFixed(1)+'%'} sub=${winDays+' / '+tradingDays+' Tage'} color=${dayWr>=50?C.green:C.red}/>
-          <${SC} label="Expectancy" value=${fd(exp)} color=${exp>=0?C.green:C.red}/>
-          <${SC} label="Profit Factor" value=${isFinite(pf)?pf.toFixed(2):'∞'} color=${pf>=1.5?C.green:pf>=1?C.yellow:C.red}/>
-          <${SC} label="Max Drawdown" value=${fd(-ddAbs)} sub=${ddPct.toFixed(1)+'%'} color=${C.red}/>
-          <${SC} label="Recovery Factor" value=${isFinite(rf)&&rf>0?rf.toFixed(2):'–'} color=${rf>=2?C.green:rf>=1?C.yellow:C.red}/>
-          <${SC} label="Ø Gewinn" value=${fd(avgW)} color=${C.green}/>
-          <${SC} label="Ø Verlust" value=${fd(-avgL)} color=${C.red}/>
-          <${SC} label="Trade Streak" value=${streak.trade===0?'–':(streak.trade>0?'+':'')+streak.trade} sub=${streak.trade>0?'Gewinne':'Verluste'} color=${streak.trade>0?C.green:streak.trade<0?C.red:C.muted}/>
-          <${SC} label="Day Streak" value=${streak.day===0?'–':(streak.day>0?'+':'')+streak.day} sub=${streak.day>0?'Gewinn-Tage':'Verlust-Tage'} color=${streak.day>0?C.green:streak.day<0?C.red:C.muted}/>
-          <${SC} label="Offene Pos." value=${trades.filter(t=>!t.exit).length} sub="Positionen offen"/>
+      <div style=${{display:'flex',flexDirection:'column',gap:16}}>
+
+        <!-- Hero Strip — größte Zahlen auf einen Blick -->
+        ${ps.length>0?html`<${Card} style=${{padding:0,overflow:'hidden'}}>
+          <div style=${{display:'flex',flexWrap:'wrap'}}>
+            <${HStat} label="Gesamt P&L" value=${(tot>=0?'+':'')+fd(tot)} color=${tot>=0?C.green:C.red}/>
+            <${HStat} label="Win Rate" value=${wr.toFixed(1)+'%'} sub=${ws.length+'W · '+ls.length+'L'} color=${wr>=55?C.green:wr>=45?C.yellow:C.red}/>
+            <${HStat} label="Profit Factor" value=${isFinite(pf)?pf.toFixed(2):'∞'} sub=${avgL>0?'Ø Gewinn / Verlust':''} color=${pf>=2?C.green:pf>=1?C.yellow:C.red}/>
+            <${HStat} label="Expectancy" value=${fd(exp)} sub="Ø pro Trade" color=${exp>=0?C.green:C.red}/>
+            <${HStat} label="Max Drawdown" value=${'-'+ddPct.toFixed(1)+'%'} sub=${fd(-ddAbs)+' absolut'} color=${ddPct>20?C.red:ddPct>10?C.yellow:C.green}/>
+            <${HStat} label="Recovery Factor" value=${isFinite(rf)&&rf>0?rf.toFixed(2):'–'} sub="P&L ÷ Max DD" color=${rf>=2?C.green:rf>=1?C.yellow:C.red}/>
+            <${HStat} label="Akt. Streak" value=${streak.trade===0?'–':(streak.trade>0?'+'+streak.trade+'W':Math.abs(streak.trade)+'L')} sub=${streak.day===0?'Kein Streak':(streak.day>0?'+'+streak.day+' Gew.-Tage':Math.abs(streak.day)+' Verl.-Tage')} color=${streak.trade>0?C.green:streak.trade<0?C.red:C.muted}/>
+          </div>
+        </${Card}>`:html`<${Card} style=${{padding:'28px',textAlign:'center',border:`1px dashed ${C.border}`}}>
+          <div style=${{color:C.muted,fontSize:13}}>Noch keine abgeschlossenen Trades</div>
+        </${Card}>`}
+
+        <!-- Equity Kurve + Drawdown -->
+        <div style=${{display:'grid',gridTemplateColumns:'3fr 2fr',gap:14}} class="g2">
+          <${Card} style=${{padding:20}}>
+            <div style=${{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:14}}>
+              <div>
+                <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em'}}>EQUITY KURVE</div>
+                <div style=${{fontSize:11,color:C.muted,marginTop:3}}>kumulativer P&L über alle Trades</div>
+              </div>
+              <div style=${{fontSize:20,fontWeight:800,color:tot>=0?C.green:C.red}}>${tot>=0?'+':''}${fd(tot)}</div>
+            </div>
+            <${AreaChart} data=${eqD} xKey="date" yKey="eq" color=${tot>=0?C.green:C.red} h=${150}/>
+          </${Card}>
+          <${Card} style=${{padding:20}}>
+            <div style=${{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:14}}>
+              <div>
+                <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em'}}>DRAWDOWN</div>
+                <div style=${{fontSize:11,color:C.muted,marginTop:3}}>Rückgang vom letzten Hoch</div>
+              </div>
+              <div style=${{fontSize:17,fontWeight:800,color:ddPct>20?C.red:ddPct>10?C.yellow:C.green}}>-${ddPct.toFixed(1)}%</div>
+            </div>
+            ${eqD.length>=2?html`<${DrawdownChart} trades=${trades} h=${150}/>`:html`<div style=${{color:C.muted,fontSize:12,padding:'50px 0',textAlign:'center'}}>Min. 2 Trades</div>`}
+          </${Card}>
         </div>
 
-        <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:14}} class="g3">
-          <${ZellaGauge} score=${zScore}/>
+        <!-- Monats P&L + Wochentage -->
+        <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}} class="g2">
+          <${Card} style=${{padding:20}}>
+            <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em',marginBottom:14}}>MONATLICHE P&L</div>
+            <${BarChart} data=${mD} xKey="m" yKey="p" h=${140}/>
+          </${Card}>
+          <${Card} style=${{padding:20}}>
+            <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em',marginBottom:4}}>WOCHENTAG PERFORMANCE</div>
+            <div style=${{fontSize:11,color:C.muted,marginBottom:12}}>P&L + Win-Rate je Wochentag</div>
+            <${DayOfWeekChart} trades=${trades}/>
+          </${Card}>
+        </div>
+
+        <!-- Detailmetriken Grid -->
+        <div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))',gap:10}}>
+          <${SC} label="Payoff Ratio" value=${payoff?payoff.toFixed(2):'–'} sub=${payoff?'Ø W / Ø L':'Stop-Loss eintragen'} color=${payoff>=2?C.green:payoff>=1?C.yellow:C.red}/>
+          <${SC} label="Sharpe Ratio" value=${sharpe!==null?sharpe:'–'} sub="Rendite / Risiko" color=${sharpe===null?C.muted:sharpe>=1?C.green:sharpe>=0?C.yellow:C.red}/>
+          <${SC} label="Bester Trade" value=${bestTrade!==null?fd(bestTrade):'–'} sub="einzel. Gewinn" color=${C.green}/>
+          <${SC} label="Schlechtester" value=${worstTrade!==null?fd(worstTrade):'–'} sub="einzel. Verlust" color=${C.red}/>
+          <${SC} label="Max Konsekutiv" value=${consec.wins+'W  /  '+consec.losses+'L'} sub="Gewinn- / Verlust-Serie" color=${consec.wins>=consec.losses?C.green:C.red}/>
+          <${SC} label="Ø R-Multiple" value=${avgR!==null?(avgR>=0?'+':'')+avgR+'R':'–'} sub=${avgR!==null?'braucht SL + Exit':'Stop-Loss eintragen'} color=${avgR===null?C.muted:avgR>=1?C.green:avgR>=0?C.yellow:C.red}/>
+          <${SC} label="Tage Win %" value=${dayWr.toFixed(1)+'%'} sub=${winDays+' / '+tradingDays+' Gewinn-Tage'} color=${dayWr>=55?C.green:dayWr>=45?C.yellow:C.red}/>
+          <${SC} label="Gebühren ges." value=${fd(totalFees)} sub=${'Ø '+fd(totalFees/Math.max(cl.length,1))+' / Trade'} color=${C.muted}/>
+          <${SC} label="Calmar Ratio" value=${isFinite(rf)&&rf>0?rf.toFixed(2):'–'} sub="P&L ÷ Max Drawdown" color=${rf>=2?C.green:rf>=1?C.yellow:C.red}/>
+          <${SC} label="Akt. Streak" value=${streak.trade===0?'–':(streak.trade>0?'+'+streak.trade+' Wins':Math.abs(streak.trade)+' Losses')} sub=${streak.day===0?'kein akt. Streak':(streak.day>0?'+'+streak.day+' Gewinn-Tage':Math.abs(streak.day)+' Verl.-Tage')} color=${streak.trade>0?C.green:streak.trade<0?C.red:C.muted}/>
+        </div>
+
+        <!-- Tilt + Kalender -->
+        <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}} class="g2">
           <${TiltWidget} score=${tilt}/>
-          <${Card} style=${{padding:16}}><div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:10}}>KALENDER</div><${CalendarWidget} trades=${trades}/></${Card}>
+          <${Card} style=${{padding:18}}><div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:12}}>HANDELSKALENDER</div><${CalendarWidget} trades=${trades}/></${Card}>
         </div>
 
-        <div style=${{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14}} class="g2">
-          <${Card} style=${{padding:18}}><div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:12}}>EQUITY KURVE</div><${AreaChart} data=${eqD} xKey="date" yKey="eq" color=${tot>=0?C.green:C.red}/></${Card}>
-          <${Card} style=${{padding:18}}><div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em',marginBottom:12}}>MONATS P&L</div><${BarChart} data=${mD} xKey="m" yKey="p"/></${Card}>
+        <!-- Win/Loss + Asset + Setup Donuts -->
+        ${(()=>{
+          const winSeg=[{value:ws.length,color:C.green},{value:ls.length,color:C.red}];
+          const COLORS=[C.accent,'#f97316','#06b6d4','#a78bfa','#34d399',C.yellow,C.green,C.red];
+          const assetCounts={};cl.forEach(t=>{const k=t.type||'Unbekannt';assetCounts[k]=(assetCounts[k]||0)+1;});
+          const assetSeg=Object.entries(assetCounts).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([k,v],i)=>({value:v,color:COLORS[i],label:k}));
+          const setupCounts={};cl.forEach(t=>{if(t.setup)setupCounts[t.setup]=(setupCounts[t.setup]||0)+1;});
+          const setupSeg=Object.entries(setupCounts).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([k,v],i)=>({value:v,color:COLORS[i],label:k}));
+          if(!ps.length) return '';
+          return html`<div style=${{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:14}} class="g3">
+            <${Card} style=${{padding:20}}>
+              <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em',marginBottom:14}}>WIN / LOSS</div>
+              <div style=${{display:'flex',alignItems:'center',gap:16}}>
+                <${DonutChart} segments=${winSeg} label=${wr.toFixed(0)+'%'} sub="Win Rate" size=${130} thick=${24}/>
+                <div style=${{flex:1}}>
+                  <div style=${{marginBottom:10}}>
+                    <div style=${{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                      <span style=${{fontSize:11,color:C.green,fontWeight:600}}>Wins</span>
+                      <span style=${{fontSize:13,fontWeight:800,color:C.green}}>${ws.length}</span>
+                    </div>
+                    <div style=${{background:C.border,borderRadius:4,height:5}}>
+                      <div style=${{width:(ps.length?ws.length/ps.length*100:0)+'%',height:'100%',background:C.green,borderRadius:4}}/>
+                    </div>
+                  </div>
+                  <div style=${{marginBottom:10}}>
+                    <div style=${{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                      <span style=${{fontSize:11,color:C.red,fontWeight:600}}>Losses</span>
+                      <span style=${{fontSize:13,fontWeight:800,color:C.red}}>${ls.length}</span>
+                    </div>
+                    <div style=${{background:C.border,borderRadius:4,height:5}}>
+                      <div style=${{width:(ps.length?ls.length/ps.length*100:0)+'%',height:'100%',background:C.red,borderRadius:4}}/>
+                    </div>
+                  </div>
+                  <div style=${{borderTop:`1px solid ${C.border}`,paddingTop:8,display:'grid',gridTemplateColumns:'1fr 1fr',gap:4}}>
+                    <div><div style=${{fontSize:8.5,color:C.muted,fontWeight:700}}>Ø GEWINN</div><div style=${{fontSize:13,fontWeight:800,color:C.green}}>${fd(avgW)}</div></div>
+                    <div><div style=${{fontSize:8.5,color:C.muted,fontWeight:700}}>Ø VERLUST</div><div style=${{fontSize:13,fontWeight:800,color:C.red}}>${fd(-avgL)}</div></div>
+                  </div>
+                </div>
+              </div>
+            </${Card}>
+            <${Card} style=${{padding:20}}>
+              <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em',marginBottom:14}}>ASSET-TYP</div>
+              <div style=${{display:'flex',flexDirection:'column',alignItems:'center',gap:10}}>
+                <${DonutChart} segments=${assetSeg.length?assetSeg:[{value:1,color:C.muted}]} label=${assetSeg.length?assetSeg[0].label:'–'} sub="Häufigster" size=${130} thick=${24}/>
+                <div style=${{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'center',fontSize:10}}>
+                  ${assetSeg.map(s=>html`<span key=${s.label} style=${{color:s.color,fontWeight:600}}>● ${s.label}</span>`)}
+                </div>
+              </div>
+            </${Card}>
+            <${Card} style=${{padding:20}}>
+              <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em',marginBottom:14}}>SETUPS</div>
+              <div style=${{display:'flex',flexDirection:'column',alignItems:'center',gap:10}}>
+                <${DonutChart} segments=${setupSeg.length?setupSeg:[{value:1,color:C.muted}]} label=${String(Object.keys(setupCounts).length||'–')} sub="Setups" size=${130} thick=${24}/>
+                <div style=${{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'center',fontSize:10}}>
+                  ${setupSeg.map(s=>html`<span key=${s.label} style=${{color:s.color,fontWeight:600}}>● ${s.label}</span>`)}
+                </div>
+              </div>
+            </${Card}>
+          </div>`;
+        })()}
+
+        <!-- R-Multiple Scatter + P&L Histogramm -->
+        ${(()=>{
+          const scData=cl.map(t=>({x:calcRMul(t),y:pnl(t)||0})).filter(d=>d.x!==null&&isFinite(d.x));
+          if(!ps.length) return '';
+          const minP=Math.min(...ps),maxP=Math.max(...ps);
+          const BINS=9;const bstep=(maxP-minP)/BINS||1;
+          const hist=Array.from({length:BINS},(_,i)=>{
+            const lo=minP+i*bstep,hi=lo+bstep,mid=lo+bstep/2;
+            const cnt=ps.filter(p=>i===BINS-1?(p>=lo&&p<=hi):(p>=lo&&p<hi)).length;
+            return{mid,lo,hi,cnt,pos:mid>=0};
+          });
+          const maxCnt=Math.max(...hist.map(h=>h.cnt),1);
+          const BW=26,BPAD=5,OX=12,OY=118,CH=98;
+          const svgW=OX+(BW+BPAD)*BINS+14;
+          return html`<div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}} class="g2">
+            <${Card} style=${{padding:20}}>
+              <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em',marginBottom:4}}>R-MULTIPLE vs. P&L</div>
+              <div style=${{fontSize:11,color:C.muted,marginBottom:12}}>Jeder Punkt = ein Trade · benötigt SL + Exit</div>
+              ${scData.length>=2?html`<${ScatterPlot} data=${scData} h=${180}/>`:html`<div style=${{color:C.muted,fontSize:12,textAlign:'center',padding:'50px 0'}}>Stop-Loss + Ausstieg eintragen</div>`}
+            </${Card}>
+            <${Card} style=${{padding:20}}>
+              <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em',marginBottom:4}}>P&L VERTEILUNG</div>
+              <div style=${{fontSize:11,color:C.muted,marginBottom:12}}>${ps.length} Trades · ${ws.length} positiv · ${ls.length} negativ</div>
+              <svg viewBox=${'0 0 '+svgW+' 145'} width="100%" style=${{overflow:'visible'}}>
+                ${hist.map((h,i)=>{
+                  const bh=Math.max(h.cnt/maxCnt*CH,h.cnt>0?2:0);
+                  const x=OX+i*(BW+BPAD);
+                  const label=Math.abs(h.lo)<1000?(h.lo>=0?'+'+h.lo.toFixed(0):h.lo.toFixed(0)):(h.lo>=0?'+'+(h.lo/1000).toFixed(1)+'k':(h.lo/1000).toFixed(1)+'k');
+                  return html`<g key=${i}>
+                    <rect x=${x} y=${OY-bh} width=${BW} height=${bh||0} fill=${h.pos?C.green:C.red} rx="3" opacity=".82"/>
+                    <text x=${x+BW/2} y=${OY+12} text-anchor="middle" fill=${C.muted} font-size="7.5">${label}</text>
+                    ${h.cnt>0?html`<text x=${x+BW/2} y=${OY-bh-4} text-anchor="middle" fill=${C.text} font-size="9" font-weight="700">${h.cnt}</text>`:''}
+                  </g>`;
+                })}
+                <line x1=${OX-2} y1=${OY} x2=${svgW-4} y2=${OY} stroke=${C.border2} stroke-width="1"/>
+              </svg>
+            </${Card}>
+          </div>`;
+        })()}
+
+        <!-- Setup + Session Performance -->
+        <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}} class="g2">
+          <${Card} style=${{padding:20}}>
+            <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em',marginBottom:4}}>SETUP PERFORMANCE</div>
+            <div style=${{fontSize:11,color:C.muted,marginBottom:14}}>Gesamt P&L · Win% · Anzahl Trades</div>
+            <${SetupPerfChart} trades=${trades}/>
+          </${Card}>
+          <${Card} style=${{padding:20}}>
+            <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em',marginBottom:4}}>SESSION PERFORMANCE</div>
+            <div style=${{fontSize:11,color:C.muted,marginBottom:14}}>P&L nach Handelszeit · Win% · Trades</div>
+            <${SessionPerfChart} trades=${trades}/>
+          </${Card}>
         </div>
 
+        <!-- Mental State -->
+        <${Card} style=${{padding:20}}>
+          <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em',marginBottom:4}}>MENTAL STATE IMPACT</div>
+          <div style=${{fontSize:11,color:C.muted,marginBottom:14}}>Durchschnittlicher P&L je Gemütszustand beim Einstieg</div>
+          <${MentalPerfChart} trades=${trades}/>
+        </${Card}>
+
+        <!-- Letzte Trades -->
         <${Card}>
-          <div style=${{padding:'12px 18px',borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.07em'}}>LETZTE TRADES</div>
+          <div style=${{padding:'14px 20px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style=${{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.09em'}}>LETZTE TRADES</div>
+            <span style=${{fontSize:11,color:C.muted}}>${rec.length} von ${trades.length}</span>
+          </div>
           <div style=${{overflowX:'auto'}}><table style=${{width:'100%',borderCollapse:'collapse',fontSize:13}}>
-            <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>${['Datum','Symbol','Seite','Einstieg','Ausstieg','P&L $','R-Mul.','Rating'].map(h=>html`<th key=${h} style=${{padding:'9px 14px',textAlign:'left',fontSize:10,fontWeight:700,color:C.muted,whiteSpace:'nowrap'}}>${h}</th>`)}</tr></thead>
-            <tbody>${rec.map(t=>{const p=pnl(t),rm=calcRMul(t);return html`<tr key=${t.id} class="hr" style=${{borderBottom:`1px solid ${C.border}20`}} onClick=${()=>onEdit(t)}>
-              <td style=${{padding:'10px 14px',color:C.muted,fontSize:12}}>${t.date}</td>
-              <td style=${{padding:'10px 14px',fontFamily:'monospace',fontWeight:700}}>${t.symbol}</td>
-              <td style=${{padding:'10px 14px',fontWeight:700,fontSize:12,color:t.side==='Long'?C.green:C.red}}>${t.side==='Long'?'▲':'▼'} ${t.side}</td>
-              <td style=${{padding:'10px 14px',fontFamily:'monospace'}}>$${t.entry.toFixed(2)}</td>
-              <td style=${{padding:'10px 14px',fontFamily:'monospace'}}>${t.exit?'$'+t.exit.toFixed(2):html`<${Badge} color=${C.yellow}>Offen</${Badge}>`}</td>
-              <td style=${{padding:'10px 14px',fontFamily:'monospace',fontWeight:700,color:pc(p)}}>${p===null?'–':(p>=0?'+':'')+fd(p)}</td>
-              <td style=${{padding:'10px 14px',fontFamily:'monospace',fontSize:12,color:pc(rm)}}>${rm===null?'–':(rm>=0?'+':'')+rm.toFixed(2)+'R'}</td>
-              <td style=${{padding:'10px 14px'}}>${t.rating>0?html`<${Stars} value=${t.rating}/>`:html`<span style=${{color:C.muted,fontSize:12}}>–</span>`}</td>
+            <thead><tr style=${{borderBottom:`1px solid ${C.border}`}}>
+              ${['Datum','Symbol','Seite','Entry','Exit','P&L','R-Mul.','Setup','Rating'].map(h=>html`<th key=${h} style=${{padding:'9px 16px',textAlign:'left',fontSize:9.5,fontWeight:700,color:C.muted,letterSpacing:'.07em',whiteSpace:'nowrap'}}>${h}</th>`)}
+            </tr></thead>
+            <tbody>${rec.map(t=>{const p=pnl(t),rm=calcRMul(t);return html`<tr key=${t.id} class="hr" style=${{borderBottom:`1px solid ${C.border}12`,cursor:'pointer'}} onClick=${()=>onEdit(t)}>
+              <td style=${{padding:'11px 16px',color:C.muted,fontSize:12}}>${t.date}${t.time?html` <span style=${{fontSize:10}}>${t.time}</span>`:''}</td>
+              <td style=${{padding:'11px 16px',fontFamily:'monospace',fontWeight:700,fontSize:13}}>${t.symbol}</td>
+              <td style=${{padding:'11px 16px'}}><span style=${{fontWeight:700,fontSize:12,color:t.side==='Long'?C.green:C.red,background:(t.side==='Long'?C.green:C.red)+'15',padding:'3px 8px',borderRadius:5}}>${t.side==='Long'?'↑':'↓'} ${t.side}</span></td>
+              <td style=${{padding:'11px 16px',fontFamily:'monospace',fontSize:12,color:C.muted}}>${t.entry.toFixed(2)}</td>
+              <td style=${{padding:'11px 16px',fontFamily:'monospace',fontSize:12,color:C.muted}}>${t.exit?t.exit.toFixed(2):html`<${Badge} color=${C.yellow}>Offen</${Badge}>`}</td>
+              <td style=${{padding:'11px 16px',fontFamily:'monospace',fontWeight:800,fontSize:13,color:pc(p)}}>${p===null?'–':(p>=0?'+':'')+fd(p)}</td>
+              <td style=${{padding:'11px 16px',fontFamily:'monospace',fontSize:12,color:pc(rm)}}>${rm===null?'–':(rm>=0?'+':'')+rm.toFixed(2)+'R'}</td>
+              <td style=${{padding:'11px 16px',fontSize:12,color:C.muted}}>${t.setup||'–'}</td>
+              <td style=${{padding:'11px 16px'}}>${t.rating>0?html`<${Stars} value=${t.rating}/>`:html`<span style=${{color:C.muted}}>–</span>`}</td>
             </tr>`;})}
             </tbody>
           </table></div>
@@ -729,7 +1216,7 @@ function Journal({trades,setTrades,onEdit}){
             </td>
           </tr>
           ${isExpanded&&(t.notes||t.setup||t.session)?html`<tr key=${'x'+t.id} style=${{borderBottom:`1px solid ${C.border}20`,background:C.card2}}>
-            <td colSpan="14" style=${{padding:'10px 18px'}}>
+            <td colSpan="13" style=${{padding:'10px 18px'}}>
               <div style=${{display:'flex',gap:20,flexWrap:'wrap',fontSize:12}}>
                 ${t.setup?html`<span><span style=${{color:C.muted}}>Setup: </span><span style=${{fontWeight:600,color:C.accent}}>${t.setup}</span></span>`:''}
                 ${t.session?html`<span><span style=${{color:C.muted}}>Session: </span><span style=${{fontWeight:600}}>${t.session}</span></span>`:''}
@@ -762,14 +1249,18 @@ function Reports({trades,plays}){
     const pf=avgL>0?(wins.reduce((s,t)=>s+pnl(t),0))/Math.abs(losses.reduce((s,t)=>s+pnl(t),0)):null;
     const ex=calcExpectancy(closed);
     const dd=calcMaxDD(closed);
-    const zs=calcZellaScore(closed);
+    const sh=calcSharpe(closed);
+    const avgRm=calcAvgRMul(closed);
+    const conse=calcConsecWL(closed);
     const items=[
       {l:'Trades',v:closed.length},{l:'Gewinner',v:wins.length},{l:'Verlierer',v:losses.length},
       {l:'Win Rate',v:closed.length?(wins.length/closed.length*100).toFixed(1)+'%':'–'},
       {l:'Avg. Win',v:avgW?'+'+fd(avgW):'–'},{l:'Avg. Loss',v:avgL?'-'+fd(avgL):'–'},
       {l:'Profit Factor',v:pf?pf.toFixed(2):'–'},{l:'Expectancy',v:ex?fd(ex):'–'},
       {l:'Max Drawdown',v:dd.abs?'-'+fd(dd.abs)+' ('+dd.pct.toFixed(1)+'%)':'–'},
-      {l:'Zella Score',v:zs>0?zs.toFixed(0)+'/100':'<3 Trades'},
+      {l:'Sharpe Ratio',v:sh!==null?sh:'<3 Trades'},
+      {l:'Ø R-Multiple',v:avgRm!==null?(avgRm>=0?'+':'')+avgRm+'R':'–'},
+      {l:'Max Konsek. W/L',v:conse.wins+'W / '+conse.losses+'L'},
     ];
     return html`<div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:12}}>
       ${items.map(i=>html`<${Card} key=${i.l} style=${{padding:'16px 18px'}}>
@@ -1089,6 +1580,7 @@ function Playbook({plays,setPlays}){
   return html`<div style=${{display:'flex',gap:16,height:'calc(100vh - 140px)',minHeight:400}}>
     <div style=${{width:200,flexShrink:0,display:'flex',flexDirection:'column',gap:8}}>
       <button onClick=${newPlay} style=${{background:C.accent,color:'#000',border:'none',borderRadius:8,padding:'9px 14px',fontWeight:700,cursor:'pointer',fontSize:13}}>+ Strategie</button>
+      <button onClick=${()=>{if(confirm('Standard-Strategien laden? Eigene Änderungen bleiben erhalten — die 12 Vorlagen werden hinzugefügt.'))setPlays(ps=>{const existing=ps.map(p=>p.name);return[...SPB.filter(s=>!existing.includes(s.name)),...ps];});}} style=${{background:'transparent',border:`1px solid ${C.border}`,borderRadius:8,padding:'7px 14px',color:C.muted,cursor:'pointer',fontSize:12,fontWeight:600}}>↺ Vorlagen laden</button>
       <div style=${{display:'flex',flexDirection:'column',gap:4,overflowY:'auto'}}>
         ${plays.map(p=>html`<button key=${p.id} onClick=${()=>{setSel(p.id);setEdit(false);setForm(p);}} style=${{background:sel===p.id?C.card2:'transparent',border:`1px solid ${sel===p.id?C.border:'transparent'}`,borderRadius:8,padding:'10px 12px',textAlign:'left',color:sel===p.id?C.text:C.muted,cursor:'pointer',fontWeight:sel===p.id?600:400,fontSize:13}}>${p.name}</button>`)}
       </div>
@@ -1540,7 +2032,7 @@ function App(){
     try{const s=localStorage.getItem('tt_trades');return s?JSON.parse(s):SD;}catch{return SD;}
   });
   const [plays,setPlays]=React.useState(()=>{
-    try{const s=localStorage.getItem('tt_plays');return s?JSON.parse(s):[SPB];}catch{return [SPB];}
+    try{const s=localStorage.getItem('tt_plays');const p=s?JSON.parse(s):SPB;return Array.isArray(p)&&p.length>0&&Array.isArray(p[0])?SPB:p;}catch{return SPB;}
   });
   const [notes,setNotes]=React.useState(()=>{
     try{const s=localStorage.getItem('tt_notes');return s?JSON.parse(s):[];}catch{return [];}
@@ -1552,7 +2044,6 @@ function App(){
   const [page,setPage]=React.useState('dashboard');
   const [modal,setModal]=React.useState(null);
   const [capModal,setCapModal]=React.useState(false);
-
   function toggleTheme(){
     const next=theme==='dark'?'light':'dark';
     applyTheme(next);setTheme(next);
