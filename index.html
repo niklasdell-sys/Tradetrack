@@ -380,8 +380,9 @@ function CalendarWidget({trades}){
   const dim=new Date(y,m+1,0).getDate();
   const firstDay=(new Date(y,m,1).getDay()+6)%7; // Mon=0
   const dayMap={};
-  trades.filter(t=>t.exit).forEach(t=>{
+  trades.filter(t=>t.exit&&t.date).forEach(t=>{
     const d=new Date(t.date);
+    if(isNaN(d.getTime())) return;
     if(d.getMonth()===m&&d.getFullYear()===y){const day=d.getDate();dayMap[day]=(dayMap[day]||0)+(pnl(t)||0);}
   });
   const MNAMES=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
@@ -546,7 +547,9 @@ function DayOfWeekChart({trades}){
   const DAYS=['Mo','Di','Mi','Do','Fr','Sa','So'];
   const buckets=DAYS.map(d=>({d,p:0,n:0,w:0}));
   cl.forEach(t=>{
+    if(!t.date) return;
     const dow=(new Date(t.date).getDay()+6)%7; // Mon=0
+    if(isNaN(dow)||dow<0||dow>6||!buckets[dow]) return;
     const p=pnl(t)||0;
     buckets[dow].p+=p;buckets[dow].n++;if(p>0)buckets[dow].w++;
   });
@@ -1322,11 +1325,13 @@ function Reports({trades,plays}){
     closed.forEach(t=>{
       const p=pnl(t);
       if(p===null) return;
-      if(t.time){const h=parseInt(t.time.split(':')[0]);if(!hours[h]){hours[h]={p:0,n:0};}hours[h].p+=p;hours[h].n++;}
+      if(t.time){const h=parseInt(t.time.split(':')[0]);if(!isNaN(h)&&h>=0&&h<24){if(!hours[h]){hours[h]={p:0,n:0};}hours[h].p+=p;hours[h].n++;}}
+      if(!t.date) return;
       const dt=new Date(t.date);
+      if(isNaN(dt.getTime())) return;
       let d=dt.getDay();if(d===0)d=7;
       const dk=dowK[d-1];
-      dow[dk]+=p;dowN[dk]++;
+      if(dk) {dow[dk]+=p;dowN[dk]++;}
     });
     const hData=Object.entries(hours).sort((a,b)=>a[0]-b[0]).map(([h,v])=>({m:h+':00',p:v.p}));
     const dData=dowK.map(k=>({m:k,p:dow[k]}));
